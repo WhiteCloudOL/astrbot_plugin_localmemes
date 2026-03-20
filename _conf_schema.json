@@ -1,0 +1,50 @@
+{
+  "activate_prob": {
+    "description": "表情包激活概率",
+    "type": "float",
+    "hint": "激活表情包的概率，非发送表情包概率，而是对文本进行替换（或调用LLM判断）的概率，实际发送概率<=激活表情包概率",
+    "default": 0.5
+  },
+  "emoji_prompt": {
+    "type": "text",
+    "editor_mode": true,
+    "description": "表情包替换词生成提示词",
+    "hint": "如果你打开了AI规划，请忽略此项",
+    "default": "你需要在回复文本时，根据回答内容的情感倾向，从以下标签字典中选择最相关的一个情绪标签附加在文本末尾（格式为<标签名>）：\nPYTHON\ntag_dict = {\n    \"happy\": \"正面、愉快、赞赏、成功或庆祝的内容\",\n    \"sad\": \"悲伤、遗憾、同情或负面情绪的内容\",\n    \"angry\": \"愤怒、不满或强烈抗议的内容\",\n    \"confused\": \"困惑、不确定或需要澄清的内容\",\n    \"surprised\": \"惊讶、意外或超出预期的内容\",\n    \"thinking\": \"思考、分析或需要深度推理的内容\",\n    \"neutral\": \"客观事实陈述或无明显情绪的内容\"\n}\n选择规则：\n严格评估文本与标签描述的匹配度\n每次回复最多添加一个标签（如无匹配则不加）\n标签必须用尖括号包裹且放在所有文本的最后\n禁止连续添加多个标签或重复添加\n示例：\n\"这个问题解决得很漂亮！<happy>\"\n\"很抱歉听到这个消息<sad>\"\n\"根据数据统计，气温上升了2℃\" (无标签)\n\n特别要求：\n\n不得解释标签系统\n保持原始回答质量不变\n标签添加比例应自然合理（非强制每句添加）"
+  },
+  "ai_judge": {
+    "description": "AI规划设置",
+    "type": "object",
+    "hint": "启用后需要配置LLM Provider",
+    "obvious_hint": true,
+    "items": {
+      "enable_ai_judge": {
+        "description": "AI规划判断模式",
+        "hint": "启用后将禁用关键词替换，切换为AI规划判断模式",
+        "type": "bool",
+        "default": false
+      },
+      "judge_provider_id": {
+        "type": "string",
+        "description": "AI规划模型 Provider ID",
+        "_special": "select_provider",
+        "hint": "选择用于AI规划的 LLM Provider，建议使用低成本快速大模型。留空则使用当前会话的默认 Provider（仅在AI规划判断模式生效）",
+        "default": ""
+      },
+      "judge_prompt": {
+        "type": "text",
+        "editor_mode": true,
+        "description": "AI规划提示词",
+        "hint": "系统将根据此提示词在句中添加需要的表情，如果你关闭了AI规划，请忽略此项",
+        "default": "你需要在回复文本时，根据回答内容的情感倾向，从以下标签字典中选择最相关的一个情绪标签附加在文本末尾（格式为<标签名>）：\nPYTHON\ntag_dict = {\n    \"happy\": \"正面、愉快、赞赏、成功或庆祝的内容\",\n    \"sad\": \"悲伤、遗憾、同情或负面情绪的内容\",\n    \"angry\": \"愤怒、不满或强烈抗议的内容\",\n    \"confused\": \"困惑、不确定或需要澄清的内容\",\n    \"surprised\": \"惊讶、意外或超出预期的内容\",\n    \"thinking\": \"思考、分析或需要深度推理的内容\",\n    \"neutral\": \"客观事实陈述或无明显情绪的内容\"\n}\n选择规则：\n严格评估文本与标签描述的匹配度\n每次回复最多添加一个标签（如无匹配则不加）\n标签必须用尖括号包裹且放在所有文本的最后\n禁止连续添加多个标签或重复添加\n示例：\n\"这个问题解决得很漂亮！<happy>\"\n\"很抱歉听到这个消息<sad>\"\n\"根据数据统计，气温上升了2℃\" (无标签)\n\n特别要求：\n\n不得解释标签系统\n保持原始回答质量不变\n标签添加比例应自然合理（非强制每句添加）"
+      }
+    }
+  },
+  "emoji_types": {
+    "description": "表情分类",
+    "type": "text",
+    "editor_mode": true,
+    "hint": "用于表情包分类存储",
+    "items": ""
+  }
+}

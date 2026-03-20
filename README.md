@@ -1,11 +1,11 @@
-# astrbot-plugin-helloworld
+<div align="center">
 
-AstrBot 插件模板 / A template plugin for AstrBot plugin feature
+![count](https://count.getloli.com/@:astrbot_plugin_joinmanager?name=astrbot_plugin_localmemes&theme=asoul&padding=7&offset=0&align=center&scale=1&pixelated=1&darkmode=auto)
 
-> [!NOTE]
-> This repo is just a template of [AstrBot](https://github.com/AstrBotDevs/AstrBot) Plugin.
-> 
-> [AstrBot](https://github.com/AstrBotDevs/AstrBot) is an agentic assistant for both personal and group conversations. It can be deployed across dozens of mainstream instant messaging platforms, including QQ, Telegram, Feishu, DingTalk, Slack, LINE, Discord, Matrix, etc. In addition, it provides a reliable and extensible conversational AI infrastructure for individuals, developers, and teams. Whether you need a personal AI companion, an intelligent customer support agent, an automation assistant, or an enterprise knowledge base, AstrBot enables you to quickly build AI applications directly within your existing messaging workflows.
+# Astrbot Plugin Localmemes
+💫本地表情包 v1.0.0💫  
+
+</div>
 
 # Supports
 
