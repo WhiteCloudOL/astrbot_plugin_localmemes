@@ -90,21 +90,25 @@ class LocalMemesPlugin(Star):
         if not await self.is_activated():
             return
 
+        if self.enable_ai_judge:
+            return
+
+        logger.info(f"当前模式：{self.enable_ai_judge}")
+
         group_id = getattr(event.message_obj, "group_id", "")
         user_id = getattr(event.message_obj.sender, "user_id", "")
 
-        if not self.enable_ai_judge:
-            try:
-                emoji_replace_prompt = self.config.get("emoji_replace_prompt","")
-                emoji_replace_prompt = self.data_manager.replace_placeholder(
-                    emoji_replace_prompt,
-                    group_id=str(group_id),
-                    user_id=str(user_id)
-                )
-                req.system_prompt += emoji_replace_prompt
-                logger.info("[本地表情包] 当前使用文本替换模式，已在系统提示词添加表情包设定！")
-            except Exception as e:
-                logger.error(f"[本地表情包] 当前使用文本替换模式，系统提示词添加失败！错误：{e}")
+        try:
+            emoji_replace_prompt = self.config.get("emoji_replace_prompt","")
+            emoji_replace_prompt = self.data_manager.replace_placeholder(
+                emoji_replace_prompt,
+                group_id=str(group_id),
+                user_id=str(user_id)
+            )
+            req.system_prompt += emoji_replace_prompt
+            logger.info("[本地表情包] 当前使用文本替换模式，已在系统提示词添加表情包设定！")
+        except Exception as e:
+            logger.error(f"[本地表情包] 当前使用文本替换模式，系统提示词添加失败！错误：{e}")
 
     @filter.on_decorating_result()
     async def on_decorating_result(self, event: AstrMessageEvent):
@@ -142,7 +146,7 @@ class LocalMemesPlugin(Star):
                 group_id,
                 user_id
             )
-            ai_judge_prompt+=f"\n{event.message_str}"
+            ai_judge_prompt+=f"\n【输入文本】\n{event.message_str}"
 
             try:
                 result = await self.call_llm_action(umo, ai_judge_prompt)

@@ -1,13 +1,57 @@
 <div align="center">
 
-![count](https://count.getloli.com/@:astrbot_plugin_joinmanager?name=astrbot_plugin_localmemes&theme=asoul&padding=7&offset=0&align=center&scale=1&pixelated=1&darkmode=auto)
+![count](https://count.getloli.com/@:astrbot_plugin_localmemes?name=astrbot_plugin_localmemes&theme=asoul&padding=7&offset=0&align=center&scale=1&pixelated=1&darkmode=auto)
 
-# Astrbot Plugin Localmemes
-💫本地表情包 v1.0.0💫  
+# Astrbot Plugin Localmemes  
+💫本地表情包 v1.0.2💫  
 
-</div>
+</div>  
 
-# Supports
+
+# 🛠️ 配置  
+
+### 表情包存放目录  
+文件路径：`AstrBot/data/plugin_data/astrbot_plugin_localmemes`  
+请将表情包分类存放于对应的文件目录中，如果你修改了`表情标签`配置，建议删除不需要的文件夹后再放入表情包。  
+
+### 表情包激活概率  
+激活表情包的概率，非发送表情包概率，而是对文本进行替换（或调用LLM判断）的概率，实际发送概率<=激活表情包概率。  
+
+### AI规划判断模式  
+开启后将不再于人设提示词中附加表情提示词，而是使用Bot发送的消息作为提示词，通过其判定是否需要附加某种表情。 
+注意：暂未测试本插件与分段回复的兼容性，待测试。  
+
+### 表情标签  
+使用标准`JSON`格式，示例:  
+```json
+{
+    "happy": "表达强烈的开心、狂喜、庆祝或极其愉悦的状态（大笑、欢呼、手舞足蹈）",
+    "content": "表达内心的平静、舒适、惬意或对现状的满意（微笑、闭眼享受、岁月静好）",
+    "affectionate": "用于表达爱意、温柔、心动或深深的迷恋（冒粉红泡泡、比心、深情凝视）",
+    "admiring": "表示赞赏、崇拜、极度认可或被惊艳到的反应（双眼放光、鼓掌、竖大拇指）",
+    "amused": "遇到滑稽、可笑之事时的反应，或带着善意的调侃与戏谑（偷笑、看热闹、挑眉）",
+    "excited": "表达对未来事物的强烈期待、热情高涨或精力充沛（搓手、原地蹦跳、双眼闪烁）",
+    "confident": "展现出成竹在胸、骄傲、得意或准备大干一场的姿态（叉腰、嘴角上扬、戴墨镜）",
+    "angry": "表达强烈的愤怒、控诉、情绪爆发或遭到冒犯时的反击（拍桌子、怒吼、火冒三丈）",
+    "annoyed": "表达轻度的不悦、烦躁、被打扰或不耐烦的情绪（皱眉、啧嘴、扶额）",
+    "sorrowful": "表达深度的悲伤、痛哭、失去感或内心的破碎（大哭、流泪、蜷缩）",
+    "aggrieved": "表达委屈、可怜、需要被安慰或带有撒娇意味的诉苦（撇嘴、眼含泪光、抱抱）",
+    "fearful": "面对威胁或未知时的恐惧、惊吓、退缩与瑟瑟发抖（捂眼、尖叫、躲藏）",
+    "anxious": "表达紧张、焦急、担忧或面临压力时的慌乱状态（咬手指、流冷汗、来回踱步）",
+    "disgusted": "对某人某事感到强烈反感、嫌弃、恶心或“下头”（翻白眼、皱鼻、后退远离）",
+    "surprised": "遇到突发事件、意料之外的信息时的震惊与不可思议（惊掉下巴、瞳孔地震、捂嘴）",
+    "confused": "表达大脑短路、无法理解、充满疑问或单纯的茫然（歪头、满头问号、抓头发）",
+    "thoughtful": "表示正在深入思考、分析问题、专注或陷入回忆（托腮、推眼镜、目光深邃）",
+    "speechless": "表达面对无语事件时的无奈、语塞、深深的叹息或摆烂（无力吐槽、黑线、摊手）",
+    "embarrassed": "用于社死瞬间、难为情、局促不安或感到羞愧的场景（脸红、捂脸、脚趾抠地）",
+    "exhausted": "表达电量耗尽、极度疲劳、大脑过载或生命力流失（瘫倒、灵魂出窍、黑眼圈）",
+    "bored": "表达百无聊赖、失去兴趣、敷衍或无事可做的状态（打哈欠、发呆、托腮神游）",
+    "intimidating": "带有压迫感、严厉的警告、死亡凝视或展现掌控力（眯眼、冷笑、居高临下）"
+}
+```  
+
+
+# 🩷 Supports
 
 - [AstrBot Repo](https://github.com/AstrBotDevs/AstrBot)
 - [AstrBot Plugin Development Docs (Chinese)](https://docs.astrbot.app/dev/star/plugin-new.html)
