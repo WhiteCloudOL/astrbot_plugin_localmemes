@@ -53,10 +53,9 @@ class DataManager:
             if isinstance(parsed_types, dict):
                 return parsed_types
             return meme_types.types
-            # 校验
         except Exception as e:
             # 回退默认
-            logger.error(f"[本地表情包] 解析<表情标签>信息失败，请检查代码格式是否正确。错误:{e}")
+            logger.error(f"[本地表情包] 解析<表情标签>信息失败，将使用默认标签。请检查代码格式是否正确。错误:{e}")
             return meme_types.types
 
     def replace_placeholder(self, msg: str, group_id: str = "", user_id: str = "") -> str:
