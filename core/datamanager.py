@@ -12,7 +12,7 @@ class DataManager:
     def __init__(self,config: AstrBotConfig, data_dir: Path):
         self.config = config
         self.emoji_types = self._load_emoji_types()
-        self.base_dir = data_dir / "emojis"
+        self.base_dir = data_dir / "memes"
         self._init_folders()
         pass
 

@@ -3,7 +3,7 @@
 ![count](https://count.getloli.com/@:astrbot_plugin_localmemes?name=astrbot_plugin_localmemes&theme=asoul&padding=7&offset=0&align=center&scale=1&pixelated=1&darkmode=auto)
 
 # Astrbot Plugin Localmemes  
-💫本地表情包 v1.0.2💫  
+💫本地表情包 v1.0.3💫  
 
 </div>  
 
@@ -11,7 +11,7 @@
 # 🛠️ 配置  
 
 ### 表情包存放目录  
-文件路径：`AstrBot/data/plugin_data/astrbot_plugin_localmemes`  
+文件路径：`AstrBot/data/plugin_data/astrbot_plugin_localmemes/memes`  
 请将表情包分类存放于对应的文件目录中，如果你修改了`表情标签`配置，建议删除不需要的文件夹后再放入表情包。  
 
 ### 表情包激活概率  

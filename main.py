@@ -125,7 +125,7 @@ class LocalMemesPlugin(Star):
                 if found:
                     tags.extend(found)
                     node.text = re.sub(r"<([^>]+)>", "", node.text)
-                    logger.info(f"表情: {node.text}")
+                    logger.info(f"[本地表情包] 解析到表情: {node.text}")
 
         if tags:
             # 存储标签到 event 中，以便 after_message_sent 使用
@@ -165,13 +165,20 @@ class LocalMemesPlugin(Star):
 
         for tag in tags:
             if tag in self.data_manager.emoji_types:
-                logger.info("[本地表情包] 正在尝试获取图片")
+                logger.debug("[本地表情包] 正在尝试获取图片")
                 img_path = self.data_manager.get_random_meme_image(tag)
                 if img_path:
                     await event.send(event.make_result().file_image(img_path))
+                    logger.info(f"[本地表情包] 获取表情包图片成功:{img_path}")
                     break
                 else:
                     logger.warning("[本地表情包] 未获取到表情包图片")
 
+    @filter.event_message_type(filter.EventMessageType.ALL)
+    async def on_learning_memes(self, event: AstrMessageEvent):
+        """从消息中识别图片表情并学习到相应分类中"""
+        pass
+
     async def terminate(self):
         """可选择实现异步的插件销毁方法，当插件被卸载/停用时会调用。"""
+
