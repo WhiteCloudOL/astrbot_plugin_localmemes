@@ -51,25 +51,34 @@ class DataManager:
     def _load_emoji_types(self) -> dict:
         origin_value: Any = self.config.get("emoji_types", "")
 
+        def _log_loaded_types(loaded_types: dict, source: str) -> dict:
+            keys = sorted(loaded_types.keys())
+            logger.info(
+                f"[本地表情包] 表情标签载入成功(source={source})：count={len(keys)} keys={keys}"
+            )
+            return loaded_types
+
         if isinstance(origin_value, dict):
-            return origin_value if origin_value else self._default_emoji_types()
+            loaded = origin_value if origin_value else self._default_emoji_types()
+            return _log_loaded_types(loaded, "dict_config")
 
         if isinstance(origin_value, str):
             stripped = origin_value.strip()
             if not stripped:
-                return self._default_emoji_types()
+                return _log_loaded_types(self._default_emoji_types(), "default_empty_string")
             try:
                 parsed_types = json.loads(stripped)
                 if isinstance(parsed_types, dict):
-                    return parsed_types if parsed_types else self._default_emoji_types()
+                    loaded = parsed_types if parsed_types else self._default_emoji_types()
+                    return _log_loaded_types(loaded, "json_string")
                 logger.error("[本地表情包] <表情标签>配置不是 JSON 对象，将使用默认标签。")
-                return self._default_emoji_types()
+                return _log_loaded_types(self._default_emoji_types(), "default_non_object_json")
             except Exception as e:
                 logger.error(f"[本地表情包] 解析<表情标签>信息失败，将使用默认标签。请检查配置格式是否正确。错误: {e}")
-                return self._default_emoji_types()
+                return _log_loaded_types(self._default_emoji_types(), "default_parse_error")
 
         logger.error(f"[本地表情包] <表情标签>配置类型不支持({type(origin_value).__name__})，将使用默认标签。")
-        return self._default_emoji_types()
+        return _log_loaded_types(self._default_emoji_types(), "default_unsupported_type")
 
     def replace_placeholder(self, msg: str, group_id: str = "", user_id: str = "") -> str:
         """

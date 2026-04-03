@@ -3,7 +3,7 @@
 ![count](https://count.getloli.com/@:astrbot_plugin_localmemes?name=astrbot_plugin_localmemes&theme=asoul&padding=7&offset=0&align=center&scale=1&pixelated=1&darkmode=auto)
 
 # AstrBot Plugin LocalMemes
-### 本地表情包插件 · v1.1.3
+### 本地表情包插件 · v1.1.4
 
 让 Bot 在聊天中更“有活力”：  
 支持**关键词替换模式**与**AI 规划模式**自动发送本地表情包，  
