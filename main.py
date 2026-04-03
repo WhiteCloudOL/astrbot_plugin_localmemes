@@ -1,13 +1,17 @@
 import asyncio
+import os
 import random
 import re
+import shutil
+import uuid
 from typing import Any
 
 from astrbot.api import AstrBotConfig, logger
 from astrbot.api.event import AstrMessageEvent, filter
-from astrbot.api.message_components import Plain
+from astrbot.api.message_components import Image, Plain
 from astrbot.api.provider import LLMResponse, ProviderRequest
 from astrbot.api.star import Context, Star, StarTools
+from astrbot.core.utils.io import download_image_by_url
 
 from .core.datamanager import DataManager
 
@@ -20,7 +24,9 @@ class LocalMemesPlugin(Star):
         #初始化配置
         self.config = config
         self.ai_judge_config: dict[str, Any] = self.config.get("ai_judge",{})
-        self.enable_ai_judge = self.ai_judge_config.get("enable_ai_judge",False)
+        self.ai_learning_config: dict[str, Any] = self.config.get("ai_learning",{})
+        self.enable_ai_judge = self.ai_judge_config.get("enable",False)
+        self.enable_ai_learning = self.ai_learning_config.get("enable",False)
 
     async def initialize(self):
         """可选择实现异步的插件初始化方法，当实例化该插件类之后会自动调用该方法。"""
@@ -43,7 +49,7 @@ class LocalMemesPlugin(Star):
 
     async def call_llm_action(self, umo: str, prompt: str) -> str:
         """调用LLM处理, type: learn, answer, image, planner"""
-        provider_id = self.ai_judge_config.get("judge_provider_id", "")
+        provider_id = self.ai_judge_config.get("provider_id", "")
         max_retry = int(self.ai_judge_config.get("max_retry", 3))
 
         if max_retry < 1:
@@ -82,6 +88,107 @@ class LocalMemesPlugin(Star):
 
         logger.error(f"[本地表情包] 调用LLM API: {provider_id} 重试次数已用尽，最后错误：{last_err}")
         return ""
+
+
+    async def call_image_llm_action(self, umo: str, image_urls: list[str]) -> str:
+        """调用图片识别API理解图片"""
+        provider_id = self.ai_learning_config.get("provider_id", "")
+        max_retry = int(self.ai_learning_config.get("max_retry", 3))
+        if max_retry < 1:
+            max_retry = 1
+
+        if not provider_id:
+            provider_id = await self.context.get_current_chat_provider_id(umo=umo)  # type: ignore
+
+        img_provider = self.context.get_provider_by_id(provider_id)  # type: ignore
+        if not img_provider:
+            logger.error(f"[本地表情包] 未找到ID为 {provider_id} 的LLM提供商，请在配置中修改图片识别模型")
+            return ""
+
+        last_err: Exception | None = None
+
+        for attempt in range(1, max_retry + 1):
+            try:
+                logger.info(
+                    f"[本地表情包] 正在唤起图片LLM API: {provider_id} (重试次数 {attempt}/{max_retry})"
+                )
+                llm_resp: LLMResponse = await self.context.llm_generate(  # type: ignore
+                    chat_provider_id=provider_id,
+                    image_urls=image_urls,
+                    prompt=f"{provider_id}",
+                )
+
+                llm_res = (llm_resp.completion_text or "").strip()
+                if not llm_res:
+                    raise ValueError("Image LLM returned empty completion_text")
+
+                logger.info(f"[本地表情包] 图片LLM {provider_id} 响应成功: {llm_res}")
+                return llm_res
+
+            except Exception as e:
+                last_err = e
+                logger.error(
+                    f"[本地表情包] 调用图片LLM API: {provider_id} 失败 (attempt {attempt}/{max_retry})，原因：{e}"
+                )
+                if attempt < max_retry:
+                    # 退避：1,2,4,8... 秒，上限 8 秒 + 随机抖动
+                    base = min(2 ** (attempt - 1), 8)
+                    delay = base + random.uniform(0, 0.5)
+                    await asyncio.sleep(delay)
+
+        logger.error(f"[本地表情包] 调用图片LLM API: {provider_id} 重试次数已用尽，最后错误：{last_err}")
+        return ""
+
+
+    def _extract_image_urls_from_message(self, event: AstrMessageEvent) -> list[str]:
+        """遍历消息中的图片消息段，提取其中的图片 URL/文件引用。"""
+        image_urls: list[str] = []
+        message_chain = getattr(event.message_obj, "message", []) or []
+
+        for comp in message_chain:
+            if not isinstance(comp, Image):
+                continue
+
+            image_ref = (getattr(comp, "url", "") or getattr(comp, "file", "") or "").strip()
+            if not image_ref:
+                logger.debug("[本地表情包] 跳过无有效链接的图片消息段")
+                continue
+
+            image_urls.append(image_ref)
+
+        return image_urls
+
+    async def _download_image_to_tag_dir(self, image_url: str, tag: str) -> str | None:
+        """将指定图片下载或复制到对应表情标签目录。"""
+        if tag not in self.data_manager.emoji_types:
+            logger.warning(f"[本地表情包] 未知表情标签，无法保存图片: {tag}")
+            return None
+
+        tag_dir = os.path.join(self.data_manager.base_dir, tag)
+        os.makedirs(tag_dir, exist_ok=True)
+
+        ext = os.path.splitext(image_url.split("?")[0])[1].lower()
+        if ext not in {".png", ".jpg", ".jpeg", ".gif", ".webp"}:
+            ext = ".jpg"
+
+        target_path = os.path.join(tag_dir, f"learned_{uuid.uuid4().hex}{ext}")
+
+        try:
+            if image_url.startswith(("http://", "https://")):
+                await download_image_by_url(image_url, path=target_path)
+            elif image_url.startswith("file:///"):
+                shutil.copyfile(image_url[8:], target_path)
+            elif os.path.exists(image_url):
+                shutil.copyfile(image_url, target_path)
+            else:
+                logger.warning(f"[本地表情包] 不支持的图片引用，无法保存: {image_url}")
+                return None
+
+            logger.info(f"[本地表情包] 图片保存成功: {target_path}")
+            return target_path
+        except Exception as e:
+            logger.warning(f"[本地表情包] 下载图片失败: {image_url}，错误: {e}")
+            return None
 
 
     @filter.on_llm_request()
@@ -140,7 +247,7 @@ class LocalMemesPlugin(Star):
         tags = []
 
         if self.enable_ai_judge and await self.is_activated():
-            ai_judge_prompt = self.ai_judge_config.get("judge_prompt", "")
+            ai_judge_prompt = self.ai_judge_config.get("prompt", "")
             ai_judge_prompt = self.data_manager.replace_placeholder(
                 ai_judge_prompt,
                 group_id,
@@ -177,8 +284,16 @@ class LocalMemesPlugin(Star):
     @filter.event_message_type(filter.EventMessageType.ALL)
     async def on_learning_memes(self, event: AstrMessageEvent):
         """从消息中识别图片表情并学习到相应分类中"""
-        pass
+        umo = event.unified_msg_origin
+        user_id = event.get_sender_id()
+        group_id = event.get_group_id()
+        image_urls = self._extract_image_urls_from_message(event)
+
+        if image_urls:
+            logger.info(
+                f"[本地表情包] 已从消息中提取到 {len(image_urls)} 个图片引用，正在调用LLM识别"
+            )
 
     async def terminate(self):
         """可选择实现异步的插件销毁方法，当插件被卸载/停用时会调用。"""
-
+        pass

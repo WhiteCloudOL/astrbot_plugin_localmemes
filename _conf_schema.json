@@ -18,7 +18,7 @@
     "hint": "启用后需要配置LLM Provider",
     "obvious_hint": true,
     "items": {
-      "enable_ai_judge": {
+      "enable": {
         "description": "AI规划判断模式",
         "hint": "启用后将禁用关键词替换，切换为AI规划判断模式，如果你采用流式输出必须开启",
         "type": "bool",
@@ -30,14 +30,47 @@
         "type": "int",
         "default": 3
       },
-      "judge_provider_id": {
+      "provider_id": {
         "type": "string",
         "description": "AI规划模型 Provider ID",
         "_special": "select_provider",
         "hint": "选择用于AI规划的 LLM Provider，建议使用低成本快速大模型。留空则使用当前会话的默认 Provider（仅在AI规划判断模式生效）",
         "default": ""
       },
-      "judge_prompt": {
+      "prompt": {
+        "type": "text",
+        "editor_mode": true,
+        "description": "AI规划提示词",
+        "hint": "系统将根据此提示词在句中添加需要的表情，如果你关闭了AI规划，请忽略此项",
+        "default": "请作为情感分析系统，根据以下【情感标签匹配规则】分析【输入文本】的情感状态，并严格按照要求输出结果。\n\n【情感标签匹配规则】\n<表情标签>\n\n【输出严格要求】\n1. 匹配成功：必须且只能输出匹配到的表情标签键名（例如：若规则中包含\"happy\"，且匹配成功，则仅输出 happy）。\n2. 匹配失败：如果【输入文本】无法匹配上述规则中的任何一个标签，必须且只能输出：None。\n3. 纯文本限制：无论匹配结果如何，你的回复只能包含这个标签词或None，严禁输出任何多余的字符、<>符号、标点符号、解释说明、分析过程或代码块格式符（```）。\n\n【输出示例】\nhappy"
+      }
+    }
+  },
+  "ai_learning": {
+    "description": "表情包学习设置",
+    "type": "object",
+    "hint": "启用后需要配置LLM Provider",
+    "obvious_hint": true,
+    "items": {
+      "enable": {
+        "description": "启用表情包学习",
+        "type": "bool",
+        "default": false
+      },
+      "max_retry": {
+        "description": "最大重试次数",
+        "hint": "设置调用AI的最大重试次数",
+        "type": "int",
+        "default": 3
+      },
+      "provider_id": {
+        "type": "string",
+        "description": "AI规划模型 Provider ID",
+        "_special": "select_provider",
+        "hint": "选择用于AI规划的 LLM Provider，建议使用低成本快速大模型。留空则使用当前会话的默认 Provider（仅在AI规划判断模式生效）",
+        "default": ""
+      },
+      "prompt": {
         "type": "text",
         "editor_mode": true,
         "description": "AI规划提示词",
