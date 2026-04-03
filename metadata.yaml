@@ -1,7 +1,7 @@
 name: astrbot_plugin_localmemes
 display_name: 本地表情包
-desc: AstrBot表情包发送插件，支持自定义分类表情发送，可由LLM规划发送或替换关键词发送
-version: v1.0.3
+desc: AstrBot本地表情包插件，支持自定义分类表情发送与学习，可由LLM规划发送或替换人设关键词发送
+version: v1.1.1
 astrbot_version: ">=4.16.0"
 author: 清蒸云鸭
 repo: https://github.com/WhiteCloudOL/astrbot_plugin_localmemes

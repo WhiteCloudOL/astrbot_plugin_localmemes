@@ -66,7 +66,6 @@ class DataManager:
             return msg
 
         ph = PlaceHolder(self.emoji_types, group_id, user_id)
-        # 确保使用实例的 emoji_types，防止 models.py 中未正确赋值
         ph.typedic["<表情标签>"] = self.emoji_types
 
         for k, v in ph.typedic.items():

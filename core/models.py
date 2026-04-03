@@ -2,7 +2,7 @@ class PlaceHolder:
     typedic = {}
 
     def __init__(self, emoji_types: dict, group_id: str = "", user_id: str = ""):
-        self.typedic["<表情标签>"] = meme_types.types
+        self.typedic["<表情标签>"] = emoji_types if emoji_types else meme_types.types
         self.typedic["<user_id>"] = user_id
         self.typedic["<group_id>"] = group_id
 

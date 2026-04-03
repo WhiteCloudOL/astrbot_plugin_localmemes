@@ -2,57 +2,168 @@
 
 ![count](https://count.getloli.com/@:astrbot_plugin_localmemes?name=astrbot_plugin_localmemes&theme=asoul&padding=7&offset=0&align=center&scale=1&pixelated=1&darkmode=auto)
 
-# Astrbot Plugin Localmemes  
-💫本地表情包 v1.0.3💫  
+# AstrBot Plugin LocalMemes
+### 本地表情包插件 · v1.1.1
 
-</div>  
+让 Bot 在聊天中更“有表情”：  
+支持**关键词替换模式**与**AI 规划模式**自动发送本地表情包，  
+支持**自主图片识别学习**，自动分类存入对应表情目录。
 
+</div>
 
-# 🛠️ 配置  
+> 💌 **欢迎提交 Issue / PR！**  
+> 如果你在使用中遇到问题、想到新功能、或希望优化文档与代码，欢迎在仓库发起 **Issue** 或 **Pull Request**，一起把插件做得更好。
 
-### 表情包存放目录  
-文件路径：`AstrBot/data/plugin_data/astrbot_plugin_localmemes/memes`  
-请将表情包分类存放于对应的文件目录中，如果你修改了`表情标签`配置，建议删除不需要的文件夹后再放入表情包。  
+---
 
-### 表情包激活概率  
-激活表情包的概率，非发送表情包概率，而是对文本进行替换（或调用LLM判断）的概率，实际发送概率<=激活表情包概率。  
+## ✨ 功能
 
-### AI规划判断模式  
-开启后将不再于人设提示词中附加表情提示词，而是使用Bot发送的消息作为提示词，通过其判定是否需要附加某种表情。 
-注意：暂未测试本插件与分段回复的兼容性，待测试。  
+- 🎭 本地表情包随机发送（按分类）
+- 🧠 双模式触发
+  - **文本替换模式**：在系统提示词中注入标签规则
+  - **AI规划模式**：由 LLM 直接判断发送标签
+- 📚 表情学习（可选）
+  - 识别消息中的图片
+  - 调用图片 LLM 输出分类标签
+  - 自动保存到 `data/plugin_data/.../memes/<标签>/`
+  - 记录保存成功 / 失败日志，便于排查
+- ⚙️ 高度可配置（概率、重试、Provider、Prompt、标签字典）
 
-### 表情标签  
-使用标准`JSON`格式，示例:  
+---
+
+## 📦 安装与目录
+
+### 1) 插件目录
+将插件放置于：
+`AstrBot/data/plugins/astrbot_plugin_localmemes`
+
+### 2) 表情包数据目录
+运行后，默认表情数据目录为：
+`AstrBot/data/plugin_data/astrbot_plugin_localmemes/memes`
+
+建议按“标签名”创建子文件夹，例如：
+
+```text
+memes/
+├─ happy/
+│  ├─ a.jpg
+│  └─ b.png
+├─ angry/
+└─ surprised/
+```
+
+> 若你修改了 `emoji_types`（表情标签字典），建议同步整理目录结构，避免出现无效分类。
+
+---
+
+## 🚀 快速开始
+
+1. 在插件配置中保留默认 `emoji_types`（或按需修改）。
+2. 往 `memes/<标签>/` 下放入对应表情图。
+3. 设置 `activate_prob`（推荐 0.3~0.7）。
+4. 二选一：
+   - 使用默认文本替换模式（`ai_judge.enable = false`）
+   - 开启 AI 规划模式（`ai_judge.enable = true` 并配置 provider）
+5. （可选）开启学习模式：`ai_learning.enable = true`，并配置图片识别 provider。
+
+---
+
+## ⚙️ 配置项说明（基于 `_conf_schema.json`）
+
+> 下表为主要配置说明，字段名与配置文件保持一致。
+
+### 顶层配置
+
+| 配置项 | 类型 | 默认值 | 说明 |
+|---|---|---:|---|
+| `activate_prob` | float | `0.5` | 插件激活概率（不是“必发图”概率）。只有命中激活后，才会进入标签判定与发图流程。 |
+| `emoji_replace_prompt` | text | 内置模板 | 文本替换模式使用的提示词模板。开启 AI 规划模式后通常可忽略。 |
+| `emoji_types` | text(JSON) | 内置 22 类 | 表情标签字典（键=标签名，值=标签含义）。**目录名需与键名一致**。 |
+
+### `ai_judge`（AI规划判断）
+
+| 配置项 | 类型 | 默认值 | 说明 |
+|---|---|---:|---|
+| `ai_judge.enable` | bool | `false` | 开启后切换为 AI 规划模式，禁用关键词替换注入。 |
+| `ai_judge.max_retry` | int | `3` | 调用 LLM 最大重试次数。 |
+| `ai_judge.provider_id` | string | `""` | 指定规划模型 Provider；为空时使用当前会话默认 Provider。 |
+| `ai_judge.prompt` | text | 内置模板 | 用于情绪标签判定的提示词。 |
+
+### `ai_learning`（图片学习）
+
+| 配置项 | 类型 | 默认值 | 说明 |
+|---|---|---:|---|
+| `ai_learning.enable` | bool | `false` | 是否启用图片学习。 |
+| `ai_learning.prob` | float | `0.5` | 学习触发概率（当消息包含图片时生效）。 |
+| `ai_learning.max_retry` | int | `3` | 图片识别调用最大重试次数。 |
+| `ai_learning.provider_id` | string | `""` | 指定图片识别 Provider；为空时使用当前会话默认 Provider。 |
+| `ai_learning.prompt` | text | 内置模板 | 图片情绪标签识别提示词。 |
+
+---
+
+## 🧩 `emoji_types` 配置示例
+
+> 必须是标准 JSON 字符串，键名会作为分类目录名。
+
 ```json
 {
-    "happy": "表达强烈的开心、狂喜、庆祝或极其愉悦的状态（大笑、欢呼、手舞足蹈）",
-    "content": "表达内心的平静、舒适、惬意或对现状的满意（微笑、闭眼享受、岁月静好）",
-    "affectionate": "用于表达爱意、温柔、心动或深深的迷恋（冒粉红泡泡、比心、深情凝视）",
-    "admiring": "表示赞赏、崇拜、极度认可或被惊艳到的反应（双眼放光、鼓掌、竖大拇指）",
-    "amused": "遇到滑稽、可笑之事时的反应，或带着善意的调侃与戏谑（偷笑、看热闹、挑眉）",
-    "excited": "表达对未来事物的强烈期待、热情高涨或精力充沛（搓手、原地蹦跳、双眼闪烁）",
-    "confident": "展现出成竹在胸、骄傲、得意或准备大干一场的姿态（叉腰、嘴角上扬、戴墨镜）",
-    "angry": "表达强烈的愤怒、控诉、情绪爆发或遭到冒犯时的反击（拍桌子、怒吼、火冒三丈）",
-    "annoyed": "表达轻度的不悦、烦躁、被打扰或不耐烦的情绪（皱眉、啧嘴、扶额）",
-    "sorrowful": "表达深度的悲伤、痛哭、失去感或内心的破碎（大哭、流泪、蜷缩）",
-    "aggrieved": "表达委屈、可怜、需要被安慰或带有撒娇意味的诉苦（撇嘴、眼含泪光、抱抱）",
-    "fearful": "面对威胁或未知时的恐惧、惊吓、退缩与瑟瑟发抖（捂眼、尖叫、躲藏）",
-    "anxious": "表达紧张、焦急、担忧或面临压力时的慌乱状态（咬手指、流冷汗、来回踱步）",
-    "disgusted": "对某人某事感到强烈反感、嫌弃、恶心或“下头”（翻白眼、皱鼻、后退远离）",
-    "surprised": "遇到突发事件、意料之外的信息时的震惊与不可思议（惊掉下巴、瞳孔地震、捂嘴）",
-    "confused": "表达大脑短路、无法理解、充满疑问或单纯的茫然（歪头、满头问号、抓头发）",
-    "thoughtful": "表示正在深入思考、分析问题、专注或陷入回忆（托腮、推眼镜、目光深邃）",
-    "speechless": "表达面对无语事件时的无奈、语塞、深深的叹息或摆烂（无力吐槽、黑线、摊手）",
-    "embarrassed": "用于社死瞬间、难为情、局促不安或感到羞愧的场景（脸红、捂脸、脚趾抠地）",
-    "exhausted": "表达电量耗尽、极度疲劳、大脑过载或生命力流失（瘫倒、灵魂出窍、黑眼圈）",
-    "bored": "表达百无聊赖、失去兴趣、敷衍或无事可做的状态（打哈欠、发呆、托腮神游）",
-    "intimidating": "带有压迫感、严厉的警告、死亡凝视或展现掌控力（眯眼、冷笑、居高临下）"
+  "happy": "表达强烈开心、狂喜、庆祝等",
+  "angry": "表达愤怒、控诉、情绪爆发",
+  "surprised": "表达震惊、意外、不可思议",
+  "speechless": "表达无语、语塞、无奈"
 }
-```  
+```
 
+---
 
-# 🩷 Supports
+## 📝 日志行为说明
 
-- [AstrBot Repo](https://github.com/AstrBotDevs/AstrBot)
-- [AstrBot Plugin Development Docs (Chinese)](https://docs.astrbot.app/dev/star/plugin-new.html)
-- [AstrBot Plugin Development Docs (English)](https://docs.astrbot.app/en/dev/star/plugin-new.html)
+启用学习模式后，插件会输出以下关键日志：
+
+- 图片识别调用成功/失败
+- LLM 分类结果为空或未知分类
+- 单张图片保存成功/失败
+- 本轮学习汇总（分类、成功数量、失败数量）
+
+建议在调试阶段保持日志可见，以便快速定位：
+- Provider 不可用
+- 标签不匹配
+- 图片链接不可访问等问题
+
+---
+
+## ❓常见问题（FAQ）
+
+### 1. 为什么文本后面跟随了一个表情标签\<happy>？
+- 请检查是否安装了其他调用`on_decorating_result`，本插件因为使用了结果装饰器，如果其他插件使用了高于`5`的优先级，那么其他插件将会优先生效。
+
+### 2. 为什么触发了但没有发送表情？
+- `activate_prob` 未命中；
+- 判定出的标签不在 `emoji_types` 中；
+- 对应标签目录下没有可用图片。
+
+### 3. 开了学习模式但没学到图片？
+- `ai_learning.enable` 未开启或 `ai_learning.prob` 未命中；
+- 图片 LLM 返回 `None` / 空字符串 / 未知标签；
+- 图片链接不可下载或本地文件路径无效。
+
+### 4. AI 规划模式和文本替换模式如何选？
+- 追求稳定与简单：文本替换模式；
+- 追求上下文理解与灵活性：AI 规划模式（推荐配合稳定 provider）。
+
+### 5. 为什么始终无法触发插件？
+- 请检查是否开启`流式输出`，如果你开启了流式输出，插件函数将会无法调用！
+
+## 🩷 问题反馈与建议
+| 方式 | 联系 |
+| :--: | :--: |
+| Github Issue | [跳转](https://github.com/WhiteCloudOL/astrbot_plugin_localmemes/issues) | 
+|QQ群 [637174573](https://qm.qq.com/q/3f2bdkDsyW) | ![](https://docs.meowyun.cn/assets/yungroup.Jsn95Q4J.webp) |
+
+## ♾️支持
+[Astrbot帮助文档](https://astrbot.app)
+[清蒸云鸭文档](https://docs.meowyun.cn/index.html)
+
+## 📄 License
+
+本项目采用 `AGPL3.0` 协议。

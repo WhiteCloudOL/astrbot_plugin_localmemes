@@ -25,6 +25,7 @@ class LocalMemesPlugin(Star):
         self.config = config
         self.ai_judge_config: dict[str, Any] = self.config.get("ai_judge",{})
         self.ai_learning_config: dict[str, Any] = self.config.get("ai_learning",{})
+        self.divide_group_config: dict[str, Any] = self.config.get("divide_group", {})
         self.enable_ai_judge = self.ai_judge_config.get("enable",False)
         self.enable_ai_learning = self.ai_learning_config.get("enable",False)
 
@@ -35,13 +36,10 @@ class LocalMemesPlugin(Star):
         """按场景判断是否触发概率。
 
         - activate: 表情包调用激活概率（activate_prob）
-        - learning: 表情包学习概率（learning_prob，兼容 ai_learning.prob）
+        - learning: 表情包学习概率（ai_learning.prob）
         """
         if scene == "learning":
-            prob = self.config.get(
-                "learning_prob",
-                self.ai_learning_config.get("learning_prob", self.ai_learning_config.get("prob", 0.5)),
-            )
+            prob = self.ai_learning_config.get("prob", 0.5)
             prob_name = "learning_prob"
         else:
             prob = self.config.get("activate_prob", 0.5)
@@ -58,6 +56,64 @@ class LocalMemesPlugin(Star):
         if prob >= 1:
             return True
         return random.random() < prob
+
+    def _is_session_allowed(
+        self,
+        group_id: str | int | None,
+        user_id: str | int | None,
+        scene: str,
+    ) -> bool:
+        """按会话黑白名单规则判断是否允许触发插件逻辑。
+
+        - 群聊（group_id 非空）：使用群组控制配置
+        - 私聊（group_id 为空）：使用用户控制配置
+        """
+        is_group_chat = bool(group_id)
+        target_type = "group" if is_group_chat else "user"
+        target_id = str(group_id if is_group_chat else user_id).strip()
+
+        if not target_id:
+            # 无有效会话标识时默认放行
+            return True
+
+        if is_group_chat:
+            block_method = str(
+                self.divide_group_config.get(
+                    "group_block_method",
+                    self.divide_group_config.get("block_method", "黑名单"),
+                )
+            ).strip()
+            control_list_raw = self.divide_group_config.get(
+                "group_control_list",
+                self.divide_group_config.get("control_list", []),
+            ) or []
+        else:
+            block_method = str(
+                self.divide_group_config.get(
+                    "user_block_method",
+                    self.divide_group_config.get("block_method", "黑名单"),
+                )
+            ).strip()
+            control_list_raw = self.divide_group_config.get("user_control_list", []) or []
+
+        control_list = {str(item).strip() for item in control_list_raw if str(item).strip()}
+
+        if block_method == "白名单":
+            allowed = target_id in control_list
+            if not allowed:
+                logger.info(
+                    f"[本地表情包] 会话控制(白名单)拦截 {scene}：{target_type}_id={target_id}"
+                )
+            return allowed
+
+        # 默认黑名单模式
+        blocked = target_id in control_list
+        if blocked:
+            logger.info(
+                f"[本地表情包] 会话控制(黑名单)拦截 {scene}：{target_type}_id={target_id}"
+            )
+            return False
+        return True
 
     def format_judge_llm_result(self,text: str) -> str:
         """
@@ -109,7 +165,7 @@ class LocalMemesPlugin(Star):
         return ""
 
 
-    async def call_image_llm_action(self, umo: str, image_urls: list[str]) -> str:
+    async def call_image_llm_action(self, umo: str, image_urls: list[str], prompt: str) -> str:
         """调用图片识别API理解图片"""
         provider_id = self.ai_learning_config.get("provider_id", "")
         max_retry = int(self.ai_learning_config.get("max_retry", 3))
@@ -134,7 +190,7 @@ class LocalMemesPlugin(Star):
                 llm_resp: LLMResponse = await self.context.llm_generate(  # type: ignore
                     chat_provider_id=provider_id,
                     image_urls=image_urls,
-                    prompt=f"{provider_id}",
+                    prompt=f"{prompt}",
                 )
 
                 llm_res = (llm_resp.completion_text or "").strip()
@@ -219,7 +275,7 @@ class LocalMemesPlugin(Star):
         if self.enable_ai_judge:
             return
 
-        logger.info(f"当前模式：{self.enable_ai_judge}")
+        logger.info(f"当前模式：{'AI规划模式' if self.enable_ai_judge else '文本替换模式'}")
 
         group_id = getattr(event.message_obj, "group_id", "")
         user_id = getattr(event.message_obj.sender, "user_id", "")
@@ -236,7 +292,7 @@ class LocalMemesPlugin(Star):
         except Exception as e:
             logger.error(f"[本地表情包] 当前使用文本替换模式，系统提示词添加失败！错误：{e}")
 
-    @filter.on_decorating_result()
+    @filter.on_decorating_result(priority=5)
     async def on_decorating_result(self, event: AstrMessageEvent):
         if self.enable_ai_judge:
             return
@@ -264,6 +320,9 @@ class LocalMemesPlugin(Star):
         group_id = event.get_group_id()
         user_id = event.get_sender_id()
         tags = []
+
+        if not self._is_session_allowed(group_id, user_id, "reply"):
+            return
 
         if self.enable_ai_judge and await self.is_activated("activate"):
             ai_judge_prompt = self.ai_judge_config.get("prompt", "")
@@ -310,15 +369,51 @@ class LocalMemesPlugin(Star):
             return
 
         umo = event.unified_msg_origin
+        group_id = event.get_group_id()
+        user_id = event.get_sender_id()
+
+        if not self._is_session_allowed(group_id, user_id, "learning"):
+            return
+
         image_urls = self._extract_image_urls_from_message(event)
 
         if image_urls:
             logger.info(
                 f"[本地表情包] 已从消息中提取到 {len(image_urls)} 个图片引用，正在调用LLM识别"
             )
-            image_info = await self.call_image_llm_action(umo, image_urls)
-            if image_info:
-                logger.info(f"[本地表情包] 图片识别成功: {image_info}")
+            learning_prompt = self.ai_learning_config.get("prompt","")
+            learning_prompt = self.data_manager.replace_placeholder(
+                learning_prompt,
+                group_id,
+                user_id
+            )
+            result = await self.call_image_llm_action(umo, image_urls, learning_prompt)
+            tag = self.format_judge_llm_result(result).strip()
+
+            if not tag:
+                logger.error("[本地表情包] 表情包学习失败：图片LLM返回空分类结果，已跳过保存")
+                return
+
+            if tag not in self.data_manager.emoji_types:
+                logger.error(f"[本地表情包] 表情包学习失败：LLM返回未知分类 `{tag}`，已跳过保存")
+                return
+
+            success_count = 0
+            failed_count = 0
+
+            for image_url in image_urls:
+                saved_path = await self._download_image_to_tag_dir(image_url, tag)
+                if saved_path:
+                    success_count += 1
+                    logger.info(f"[本地表情包] 已按分类 `{tag}` 保存图片: {saved_path}")
+                else:
+                    failed_count += 1
+                    logger.error(f"[本地表情包] 按分类 `{tag}` 保存图片失败: {image_url}")
+
+            logger.info(
+                f"[本地表情包] 表情包学习完成：分类={tag}，成功={success_count}，失败={failed_count}"
+            )
+
 
 
     async def terminate(self):
