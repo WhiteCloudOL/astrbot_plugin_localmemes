@@ -115,12 +115,75 @@ class LocalMemesPlugin(Star):
             return False
         return True
 
-    def format_judge_llm_result(self,text: str) -> str:
-        """
-        删除文本中的: < > " ' “ ”
-        返回清理后的新文本
-        """
-        return re.sub(r'[<>"\'“”]', "", text)
+    def _normalize_llm_output(self, text: str) -> str:
+        """标准化 LLM 输出文本，尽量剥离包裹层（代码块、引号、尖括号）。"""
+        normalized = (text or "").strip()
+        if not normalized:
+            return ""
+
+        # 兼容 ```text ... ``` / ``` ... ```
+        code_block_match = re.match(r"^```[a-zA-Z0-9_-]*\s*\n?(.*?)\n?```$", normalized, re.S)
+        if code_block_match:
+            normalized = code_block_match.group(1).strip()
+
+        # 反复剥离成对包裹符号
+        wrappers = [('"', '"'), ("'", "'"), ("“", "”"), ("<", ">"), ("`", "`")]
+        changed = True
+        while changed and normalized:
+            changed = False
+            for left, right in wrappers:
+                if normalized.startswith(left) and normalized.endswith(right) and len(normalized) >= 2:
+                    normalized = normalized[1:-1].strip()
+                    changed = True
+
+        return normalized
+
+    def _extract_candidate_tokens(self, normalized_text: str) -> list[str]:
+        """从标准化后的输出中提取候选 token。"""
+        if not normalized_text:
+            return []
+
+        # 允许常见分隔符；严格模式下要求最终只能得到 1 个 token
+        parts = re.split(r"[\s,，、;；|/]+", normalized_text)
+        tokens = []
+        for item in parts:
+            token = item.strip().strip("\"'“”<>`")
+            if token:
+                tokens.append(token)
+        return tokens
+
+    def _parse_single_tag_result(
+        self,
+        raw_text: str,
+        scene: str,
+        allow_none: bool = True,
+    ) -> tuple[str | None, str]:
+        """严格解析 LLM 返回的单标签结果。"""
+        normalized = self._normalize_llm_output(raw_text)
+        if not normalized:
+            return None, "empty_output"
+
+        tokens = self._extract_candidate_tokens(normalized)
+        if not tokens:
+            return None, "no_token"
+
+        # 去重保序
+        unique_tokens: list[str] = []
+        for t in tokens:
+            if t not in unique_tokens:
+                unique_tokens.append(t)
+
+        if len(unique_tokens) != 1:
+            return None, f"ambiguous_tokens={unique_tokens}"
+
+        token = unique_tokens[0]
+        if allow_none and token.lower() == "none":
+            return None, "llm_returned_none"
+
+        if token not in self.data_manager.emoji_types:
+            return None, f"unknown_tag={token}"
+
+        return token, "ok"
 
     async def call_llm_action(self, umo: str, prompt: str) -> str:
         """调用LLM处理, type: learn, answer, image, planner"""
@@ -331,33 +394,48 @@ class LocalMemesPlugin(Star):
                 group_id,
                 user_id
             )
-            ai_judge_prompt+=f"\n【输入文本】\n{event.message_str}"
+            ai_judge_prompt += f"\n【输入文本】\n{event.message_str}"
 
-            try:
-                result = await self.call_llm_action(umo, ai_judge_prompt)
-                tag = self.format_judge_llm_result(result)
-                logger.info(f"[本地表情包] 解析LLM结果成功！:{tag}")
-                tags = [tag]
-            except Exception as e:
-                logger.warning(f"[本地表情包] 解析LLM结果出错，错误: {e}")
+            result = await self.call_llm_action(umo, ai_judge_prompt)
+            tag, reason = self._parse_single_tag_result(result, scene="reply", allow_none=True)
+
+            if tag is None:
+                logger.info(
+                    f"[本地表情包] 本次未发图（AI规划解析未命中）：reason={reason} raw={result!r}"
+                )
                 return
+
+            logger.info(f"[本地表情包] AI规划解析成功：tag={tag}")
+            tags = [tag]
         else:
             # 从 event 中获取之前在 on_decorating_result 中解析到的标签
             tags = getattr(event, "_detected_tags", [])
+            if not tags:
+                logger.info("[本地表情包] 本次未发图（文本替换模式未检测到标签）")
+                return
 
         if not tags:
+            logger.info("[本地表情包] 本次未发图（无可用标签）")
             return
 
+        sent = False
         for tag in tags:
-            if tag in self.data_manager.emoji_types:
-                logger.debug("[本地表情包] 正在尝试获取图片")
-                img_path = self.data_manager.get_random_meme_image(tag)
-                if img_path:
-                    await event.send(event.make_result().file_image(img_path))
-                    logger.info(f"[本地表情包] 获取表情包图片成功:{img_path}")
-                    break
-                else:
-                    logger.warning("[本地表情包] 未获取到表情包图片")
+            if tag not in self.data_manager.emoji_types:
+                logger.info(f"[本地表情包] 跳过未知标签：{tag}")
+                continue
+
+            logger.debug("[本地表情包] 正在尝试获取图片")
+            img_path = self.data_manager.get_random_meme_image(tag)
+            if img_path:
+                await event.send(event.make_result().file_image(img_path))
+                logger.info(f"[本地表情包] 获取表情包图片成功: {img_path}")
+                sent = True
+                break
+
+            logger.info(f"[本地表情包] 标签 `{tag}` 没有可用图片，本次继续尝试下一标签")
+
+        if not sent:
+            logger.info(f"[本地表情包] 本次未发图（标签存在但无可用图片）：tags={tags}")
 
     @filter.event_message_type(filter.EventMessageType.ALL)
     async def on_learning_memes(self, event: AstrMessageEvent):
@@ -388,14 +466,12 @@ class LocalMemesPlugin(Star):
                 user_id
             )
             result = await self.call_image_llm_action(umo, image_urls, learning_prompt)
-            tag = self.format_judge_llm_result(result).strip()
+            tag, reason = self._parse_single_tag_result(result, scene="learning", allow_none=True)
 
-            if not tag:
-                logger.error("[本地表情包] 表情包学习失败：图片LLM返回空分类结果，已跳过保存")
-                return
-
-            if tag not in self.data_manager.emoji_types:
-                logger.error(f"[本地表情包] 表情包学习失败：LLM返回未知分类 `{tag}`，已跳过保存")
+            if tag is None:
+                logger.error(
+                    f"[本地表情包] 表情包学习失败：分类解析未命中，reason={reason} raw={result!r}，已跳过保存"
+                )
                 return
 
             success_count = 0
