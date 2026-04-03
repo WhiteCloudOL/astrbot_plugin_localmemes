@@ -5,6 +5,12 @@
     "hint": "激活表情包的概率，非发送表情包概率，而是对文本进行替换（或调用LLM判断）的概率，实际发送概率<=激活表情包概率",
     "default": 0.5
   },
+  "learning_prob": {
+    "description": "表情包学习概率",
+    "type": "float",
+    "hint": "用于控制图片学习流程触发概率。优先生效；若未配置则回退到 ai_learning.prob",
+    "default": 0.5
+  },
   "emoji_replace_prompt": {
     "type": "text",
     "editor_mode": true,
@@ -56,6 +62,12 @@
         "description": "启用表情包学习",
         "type": "bool",
         "default": false
+      },
+      "prob": {
+        "description": "表情包学习概率",
+        "hint": "当启用表情包学习后，系统将以此概率对消息中的图片进行表情识别学习",
+        "type": "float",
+        "default": 0.5
       },
       "max_retry": {
         "description": "最大重试次数",

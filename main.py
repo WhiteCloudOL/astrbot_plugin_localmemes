@@ -31,14 +31,33 @@ class LocalMemesPlugin(Star):
     async def initialize(self):
         """可选择实现异步的插件初始化方法，当实例化该插件类之后会自动调用该方法。"""
 
-    async def is_activated(self):
-        """判断是否激活表情包"""
-        activate_prob: float = self.config.get("activate_prob", 0.5)
-        if activate_prob <= 0:
+    async def is_activated(self, scene: str = "activate") -> bool:
+        """按场景判断是否触发概率。
+
+        - activate: 表情包调用激活概率（activate_prob）
+        - learning: 表情包学习概率（learning_prob，兼容 ai_learning.prob）
+        """
+        if scene == "learning":
+            prob = self.config.get(
+                "learning_prob",
+                self.ai_learning_config.get("learning_prob", self.ai_learning_config.get("prob", 0.5)),
+            )
+            prob_name = "learning_prob"
+        else:
+            prob = self.config.get("activate_prob", 0.5)
+            prob_name = "activate_prob"
+
+        try:
+            prob = float(prob)
+        except (TypeError, ValueError):
+            logger.warning(f"[本地表情包] {prob_name} 配置无效，已回退到 0.5")
+            prob = 0.5
+
+        if prob <= 0:
             return False
-        if activate_prob >= 1:
+        if prob >= 1:
             return True
-        return random.random() < activate_prob
+        return random.random() < prob
 
     def format_judge_llm_result(self,text: str) -> str:
         """
@@ -194,7 +213,7 @@ class LocalMemesPlugin(Star):
     @filter.on_llm_request()
     async def on_llm_request(self, event: AstrMessageEvent, req: ProviderRequest):
         """当AI请求时，在提示词中添加表情包引用"""
-        if not await self.is_activated():
+        if not await self.is_activated("activate"):
             return
 
         if self.enable_ai_judge:
@@ -246,7 +265,7 @@ class LocalMemesPlugin(Star):
         user_id = event.get_sender_id()
         tags = []
 
-        if self.enable_ai_judge and await self.is_activated():
+        if self.enable_ai_judge and await self.is_activated("activate"):
             ai_judge_prompt = self.ai_judge_config.get("prompt", "")
             ai_judge_prompt = self.data_manager.replace_placeholder(
                 ai_judge_prompt,
@@ -284,15 +303,23 @@ class LocalMemesPlugin(Star):
     @filter.event_message_type(filter.EventMessageType.ALL)
     async def on_learning_memes(self, event: AstrMessageEvent):
         """从消息中识别图片表情并学习到相应分类中"""
+        if not self.enable_ai_learning:
+            return
+
+        if not await self.is_activated("learning"):
+            return
+
         umo = event.unified_msg_origin
-        user_id = event.get_sender_id()
-        group_id = event.get_group_id()
         image_urls = self._extract_image_urls_from_message(event)
 
         if image_urls:
             logger.info(
                 f"[本地表情包] 已从消息中提取到 {len(image_urls)} 个图片引用，正在调用LLM识别"
             )
+            image_info = await self.call_image_llm_action(umo, image_urls)
+            if image_info:
+                logger.info(f"[本地表情包] 图片识别成功: {image_info}")
+
 
     async def terminate(self):
         """可选择实现异步的插件销毁方法，当插件被卸载/停用时会调用。"""
