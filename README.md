@@ -5,7 +5,7 @@
 # AstrBot Plugin LocalMemes
 ### 本地表情包插件 · v1.1.1
 
-让 Bot 在聊天中更“有表情”：  
+让 Bot 在聊天中更“有活力”：  
 支持**关键词替换模式**与**AI 规划模式**自动发送本地表情包，  
 支持**自主图片识别学习**，自动分类存入对应表情目录。
 
@@ -161,7 +161,7 @@ memes/
 |QQ群 [637174573](https://qm.qq.com/q/3f2bdkDsyW) | ![](https://docs.meowyun.cn/assets/yungroup.Jsn95Q4J.webp) |
 
 ## ♾️支持
-[Astrbot帮助文档](https://astrbot.app)
+[Astrbot帮助文档](https://astrbot.app)  
 [清蒸云鸭文档](https://docs.meowyun.cn/index.html)
 
 ## 📄 License
