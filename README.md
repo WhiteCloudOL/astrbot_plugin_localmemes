@@ -3,7 +3,7 @@
 ![count](https://count.getloli.com/@:astrbot_plugin_localmemes?name=astrbot_plugin_localmemes&theme=asoul&padding=7&offset=0&align=center&scale=1&pixelated=1&darkmode=auto)
 
 # AstrBot Plugin LocalMemes
-### 本地表情包插件 · v1.1.6
+### 本地表情包插件 · v1.1.7
 
 让 Bot 在聊天中更“有活力”：  
 支持**关键词替换模式**与**AI 规划模式**自动发送本地表情包，  
@@ -28,6 +28,7 @@
   - 自动保存到 `data/plugin_data/.../memes/<标签>/`
   - 记录保存成功 / 失败日志，便于排查
 - ⚙️ 高度可配置（概率、重试、Provider、Prompt、标签字典）
+- **【推荐】**如果你采用了文本替换模式，在人设中**特别增加一段文字指明**：`可附带表情标签（请参照下文表情标签）`
 
 ---
 
@@ -141,6 +142,7 @@ memes/
 - `activate_prob` 未命中；
 - 判定出的标签不在 `emoji_types` 中；
 - 对应标签目录下没有可用图片。
+- 使用文本替换模式时，如果人设中指定了仅能发送xxxx（比如只能发送平文本），或人设提示词非常长，此时需要在人设中另外说明：`可附带表情标签（请参照下文表情标签）`
 
 ### 3. 开了学习模式但没学到图片？
 - `ai_learning.enable` 未开启或 `ai_learning.prob` 未命中；
