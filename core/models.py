@@ -1,6 +1,5 @@
+from collections.abc import Mapping
 from types import MappingProxyType
-from typing import Mapping
-
 
 DEFAULT_MEME_TYPES: Mapping[str, str] = MappingProxyType({
     "happy": "表达强烈的开心、狂喜、庆祝或极其愉悦的状态（大笑、欢呼、手舞足蹈）",
@@ -42,5 +41,5 @@ class MemeTypes:
     types = dict(DEFAULT_MEME_TYPES)
 
 
-# 兼容旧引用，后续版本可移除
+# 兼容旧引用
 meme_types = MemeTypes

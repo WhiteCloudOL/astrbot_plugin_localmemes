@@ -372,11 +372,14 @@ class LocalMemesPlugin(Star):
                     node.text = re.sub(r"<([^>]+)>", "", node.text)
                     logger.info(f"[本地表情包] 解析到表情: {node.text}")
 
+
         if tags:
             # 存储标签到 event 中，以便 after_message_sent 使用
             setattr(event, "_detected_tags", tags)
+        else:
+            logger.info("[本地表情包] 文本替换模式未解析到任何标签")
 
-    @filter.after_message_sent()
+    @filter.after_message_sent(priority=5)
     async def after_message_sent(self, event: AstrMessageEvent):
         """原有消息发出后，继续发送表情"""
         umo = event.unified_msg_origin
@@ -437,7 +440,7 @@ class LocalMemesPlugin(Star):
         if not sent:
             logger.info(f"[本地表情包] 本次未发图（标签存在但无可用图片）：tags={tags}")
 
-    @filter.event_message_type(filter.EventMessageType.ALL)
+    @filter.event_message_type(filter.EventMessageType.ALL,priority=5)
     async def on_learning_memes(self, event: AstrMessageEvent):
         """从消息中识别图片表情并学习到相应分类中"""
         if not self.enable_ai_learning:
