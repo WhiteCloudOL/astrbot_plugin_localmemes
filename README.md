@@ -3,7 +3,7 @@
 ![count](https://count.getloli.com/@:astrbot_plugin_localmemes?name=astrbot_plugin_localmemes&theme=asoul&padding=7&offset=0&align=center&scale=1&pixelated=1&darkmode=auto)
 
 # AstrBot Plugin LocalMemes
-### 本地表情包插件 · v1.2.0
+### 本地表情包插件 · v1.2.1
 
 让 Bot 在聊天中更“有活力”：  
 支持**关键词替换模式**与**AI 规划模式**自动发送本地表情包，  
@@ -69,7 +69,7 @@ memes/
 
 ---
 
-## ⚙️ 配置项说明（基于 `_conf_schema.json`）
+## ⚙️ 配置说明
 
 > 下表为主要配置说明，字段名与配置文件保持一致。
 
@@ -95,10 +95,21 @@ memes/
 | 配置项 | 类型 | 默认值 | 说明 |
 |---|---|---:|---|
 | `ai_learning.enable` | bool | `false` | 是否启用图片学习。 |
+| `ai_learning.max_memes` | int | `100` | 最多可存储的表情数量，超出数量时不再学习。 |
+| `ai_learning.random_replace` | bool | `false` | 当表情包数量超出限制时，是否自动在指定分类随机删除一张图片，用以存入新表情。 |
 | `ai_learning.prob` | float | `0.5` | 学习触发概率（当消息包含图片时生效）。 |
 | `ai_learning.max_retry` | int | `3` | 图片识别调用最大重试次数。 |
 | `ai_learning.provider_id` | string | `""` | 指定图片识别 Provider；为空时使用当前会话默认 Provider。 |
 | `ai_learning.prompt` | text | 内置模板 | 图片情绪标签识别提示词。 |
+
+### `divide_group`（会话控制）
+
+| 配置项 | 类型 | 默认值 | 说明 |
+|---|---|---:|---|
+| `divide_group.group_block_method` | string | `黑名单` | 群聊场景生效：设置群组黑白名单模式（可选"黑名单", "白名单"）。 |
+| `divide_group.group_control_list` | list | `[]` | 群聊场景生效：填写群号(group_id)的列表。 |
+| `divide_group.user_block_method` | string | `黑名单` | 私聊场景生效：设置用户黑白名单模式（可选"黑名单", "白名单"）。 |
+| `divide_group.user_control_list` | list | `[]` | 私聊场景生效：填写用户号(user_id)的列表。 |
 
 ---
 
@@ -114,24 +125,6 @@ memes/
   "speechless": "表达无语、语塞、无奈"
 }
 ```
-
----
-
-## 📝 日志行为说明
-
-启用学习模式后，插件会输出以下关键日志：
-
-- 图片识别调用成功/失败
-- LLM 分类结果为空或未知分类
-- 单张图片保存成功/失败
-- 本轮学习汇总（分类、成功数量、失败数量）
-
-建议在调试阶段保持日志可见，以便快速定位：
-- Provider 不可用
-- 标签不匹配
-- 图片链接不可访问等问题
-
----
 
 ## ❓常见问题（FAQ）
 

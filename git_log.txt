@@ -1,0 +1,18 @@
+a3d46b6 feat: 支持设置最多表情数量
+68a6de1 docs: 增加文本替换模式无法工作情况的提醒
+2a0d0e3 chores: 强化提示词，增加文本替换模式解析日志
+3286c46 chore: 修正ai_learning.prompt配置描述
+2472464 fix: 优化预设的替换提示词
+cafda82 fix: 提高代码健壮性
+c5ef2b7 chore: 更新版本至v1.1.2
+7ec8985 docs: 修正文档格式
+3c5bf67 feat: 新增黑白名单处理，群聊表情自主学习
+bae105f feat: 支持表情包学习概率
+e3c7504 chore: 修改表情学习默认配置
+b65b3ad feat: 初步实现图片解析
+eaa1790 chore: 格式化日志
+fe945ed docs: 添加配置方式的说明
+68a7701 feat: 完善AI规划模式
+e032473 feat: 初步完成人设替换方法
+d865c36 chores: init config.
+f9cd99f Initial commit

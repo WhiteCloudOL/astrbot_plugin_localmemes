@@ -27,6 +27,26 @@ class DataManager:
                 tag_dir.mkdir(parents=True, exist_ok=True)
                 logger.info(f"[本地表情包] 创建表情文件夹: {tag_dir}")
 
+    def delete_random_meme_image(self, tag: str) -> bool:
+        """随机删除指定标签文件夹下的一张图片"""
+        tag_dir = self.base_dir / tag
+        if not tag_dir.exists():
+            return False
+
+        valid_extensions = {".png", ".jpg", ".jpeg", ".gif", ".webp"}
+        try:
+            files = [p for p in tag_dir.iterdir() if p.is_file() and p.suffix.lower() in valid_extensions]
+            if not files:
+                return False
+
+            chosen_file = random.choice(files)
+            chosen_file.unlink()
+            logger.info(f"[本地表情包] 已随机删除图片: {chosen_file}")
+            return True
+        except Exception as e:
+            logger.error(f"[本地表情包] 删除文件夹 {tag_dir} 下的随机图片失败: {e}")
+            return False
+
     def get_random_meme_image(self, tag: str) -> str | None:
         """从指定标签文件夹中获取随机一张图片的路径"""
         tag_dir = self.base_dir / tag

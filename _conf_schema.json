@@ -70,6 +70,12 @@
         "type": "int",
         "default": 100
       },
+      "random_replace": {
+        "description": "达限随机替换",
+        "hint": "设置本项目，当表情包数量超出限制时，自动在指定分类随机删除一张图片，用以存入新表情",
+        "type": "bool",
+        "default": false
+      },
       "prob": {
         "description": "表情包学习概率",
         "hint": "当启用表情包学习后，系统将以此概率对消息中的图片进行表情识别学习",

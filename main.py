@@ -457,11 +457,18 @@ class LocalMemesPlugin(Star):
             return
 
         max_memes = self.ai_learning_config.get("max_memes", 0)
+        random_replace = self.ai_learning_config.get("random_replace", False)
+        need_replace = False
+
         if max_memes > 0:
             current_memes_count = self.data_manager.get_total_memes_count()
             if current_memes_count >= max_memes:
-                logger.info(f"[本地表情包] 检测到图片，当前表情数量 ({current_memes_count} / {max_memes})，已达到上限，停止学习。")
-                return
+                if random_replace:
+                    logger.info(f"[本地表情包] 检测到图片，当前表情数量 ({current_memes_count} / {max_memes})，已达到上限，已启用随机替换，继续学习。")
+                    need_replace = True
+                else:
+                    logger.info(f"[本地表情包] 检测到图片，当前表情数量 ({current_memes_count} / {max_memes})，已达到上限，停止学习。")
+                    return
             else:
                 logger.info(f"[本地表情包] 检测到图片，当前表情数量 ({current_memes_count} / {max_memes})，开始学习")
 
@@ -490,6 +497,9 @@ class LocalMemesPlugin(Star):
             failed_count = 0
 
             for image_url in image_urls:
+                if need_replace:
+                    self.data_manager.delete_random_meme_image(tag)
+
                 saved_path = await self._download_image_to_tag_dir(image_url, tag)
                 if saved_path:
                     success_count += 1
