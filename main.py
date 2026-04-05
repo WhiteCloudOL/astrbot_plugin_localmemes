@@ -456,6 +456,15 @@ class LocalMemesPlugin(Star):
         if not self._is_session_allowed(group_id, user_id, "learning"):
             return
 
+        max_memes = self.ai_learning_config.get("max_memes", 0)
+        if max_memes > 0:
+            current_memes_count = self.data_manager.get_total_memes_count()
+            if current_memes_count >= max_memes:
+                logger.info(f"[本地表情包] 检测到图片，当前表情数量 ({current_memes_count} / {max_memes})，已达到上限，停止学习。")
+                return
+            else:
+                logger.info(f"[本地表情包] 检测到图片，当前表情数量 ({current_memes_count} / {max_memes})，开始学习")
+
         image_urls = self._extract_image_urls_from_message(event)
 
         if image_urls:

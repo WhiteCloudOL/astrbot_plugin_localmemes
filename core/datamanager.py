@@ -45,6 +45,20 @@ class DataManager:
             logger.error(f"[本地表情包] 读取文件夹 {tag_dir} 失败: {e}")
             return None
 
+    def get_total_memes_count(self) -> int:
+        """获取所有分类下的表情包总数"""
+        count = 0
+        valid_extensions = {".png", ".jpg", ".jpeg", ".gif", ".webp"}
+        if not self.base_dir.exists():
+            return 0
+        try:
+            for tag_dir in self.base_dir.iterdir():
+                if tag_dir.is_dir():
+                    count += sum(1 for p in tag_dir.iterdir() if p.is_file() and p.suffix.lower() in valid_extensions)
+        except Exception as e:
+            logger.error(f"[本地表情包] 计算表情包总数失败: {e}")
+        return count
+
     def _default_emoji_types(self) -> dict[str, str]:
         return dict(DEFAULT_MEME_TYPES)
 

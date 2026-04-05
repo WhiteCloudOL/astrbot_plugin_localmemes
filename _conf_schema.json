@@ -64,6 +64,12 @@
         "type": "bool",
         "default": false
       },
+      "max_memes": {
+        "description": "最多表情数量",
+        "hint": "设置本项目，可修改本地最多可存储的表情数量，超出数量时不再学习",
+        "type": "int",
+        "default": 100
+      },
       "prob": {
         "description": "表情包学习概率",
         "hint": "当启用表情包学习后，系统将以此概率对消息中的图片进行表情识别学习",
