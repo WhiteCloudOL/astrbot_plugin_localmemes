@@ -1,3 +1,4 @@
+import hashlib
 import json
 import random
 from pathlib import Path
@@ -13,7 +14,99 @@ class DataManager:
         self.config = config
         self.emoji_types = self._load_emoji_types()
         self.base_dir = data_dir / "memes"
+        self.hash_file = data_dir / "memes_hash.json"
         self._init_folders()
+        self._init_meme_hashes()
+
+    def _init_meme_hashes(self):
+        self.meme_hashes = {}  # {rel_path: {"hash": md5_hash, "mtime": mtime}}
+        saved_data = {}
+
+        if self.hash_file.exists():
+            try:
+                with open(self.hash_file, encoding="utf-8") as f:
+                    saved_data = json.load(f)
+            except Exception as e:
+                logger.error(f"[本地表情包] 读取哈希文件失败: {e}")
+
+        if not isinstance(saved_data, dict):
+            saved_data = {}
+
+        has_changes = False
+        valid_extensions = {".png", ".jpg", ".jpeg", ".gif", ".webp"}
+
+        if self.base_dir.exists():
+            for tag_dir in self.base_dir.iterdir():
+                if tag_dir.is_dir():
+                    for p in tag_dir.iterdir():
+                        if p.is_file() and p.suffix.lower() in valid_extensions:
+                            try:
+                                rel_path = str(p.relative_to(self.base_dir)).replace("\\", "/")
+                                stat = p.stat()
+                                mtime = stat.st_mtime
+
+                                needs_hash = True
+                                if rel_path in saved_data:
+                                    item = saved_data[rel_path]
+                                    if isinstance(item, dict) and item.get("mtime") == mtime and "hash" in item:
+                                        self.meme_hashes[rel_path] = item
+                                        needs_hash = False
+
+                                if needs_hash:
+                                    with open(p, "rb") as f:
+                                        md5_hash = hashlib.md5(f.read()).hexdigest()
+                                    self.meme_hashes[rel_path] = {"hash": md5_hash, "mtime": mtime}
+                                    has_changes = True
+                            except Exception as e:
+                                logger.error(f"[本地表情包] 处理文件哈希失败: {p}, {e}")
+
+        # Check if there are any files in saved_data that no longer exist
+        if len(self.meme_hashes) != len(saved_data):
+            has_changes = True
+
+        if has_changes:
+            self._save_hashes()
+
+    def _save_hashes(self):
+        try:
+            with open(self.hash_file, "w", encoding="utf-8") as f:
+                json.dump(self.meme_hashes, f, ensure_ascii=False, indent=2)
+        except Exception as e:
+            logger.error(f"[本地表情包] 保存哈希文件失败: {e}")
+
+    def is_meme_exists(self, md5_hash: str) -> bool:
+        if not hasattr(self, "meme_hashes"):
+            return False
+        for item in self.meme_hashes.values():
+            if isinstance(item, dict) and item.get("hash") == md5_hash:
+                return True
+        return False
+
+    def add_meme_hash(self, file_path: str, md5_hash: str):
+        if not hasattr(self, "meme_hashes"):
+            self.meme_hashes = {}
+
+        try:
+            p = Path(file_path)
+            rel_path = str(p.relative_to(self.base_dir)).replace("\\", "/")
+            stat = p.stat()
+            self.meme_hashes[rel_path] = {"hash": md5_hash, "mtime": stat.st_mtime}
+            self._save_hashes()
+        except Exception as e:
+            logger.error(f"[本地表情包] 添加图片哈希记录失败: {e}")
+
+    def remove_meme_hash(self, file_path: str):
+        if not hasattr(self, "meme_hashes"):
+            return
+
+        try:
+            p = Path(file_path)
+            rel_path = str(p.relative_to(self.base_dir)).replace("\\", "/")
+            if rel_path in self.meme_hashes:
+                del self.meme_hashes[rel_path]
+                self._save_hashes()
+        except Exception as e:
+            logger.error(f"[本地表情包] 删除图片哈希记录失败: {e}")
 
     def _init_folders(self):
         """根据 emoji_types 初始化文件夹"""
@@ -40,6 +133,8 @@ class DataManager:
                 return False
 
             chosen_file = random.choice(files)
+            self.remove_meme_hash(str(chosen_file))
+
             chosen_file.unlink()
             logger.info(f"[本地表情包] 已随机删除图片: {chosen_file}")
             return True

@@ -1,8 +1,10 @@
 import asyncio
+import hashlib
 import os
 import random
 import re
 import shutil
+import tempfile
 import uuid
 from typing import Any
 
@@ -296,7 +298,37 @@ class LocalMemesPlugin(Star):
 
         return image_urls
 
-    async def _download_image_to_tag_dir(self, image_url: str, tag: str) -> str | None:
+    async def _calculate_image_hash(self, image_url: str) -> tuple[str | None, str | None]:
+        """计算远程或本地图片的 MD5，返回 (md5_hash, 临时文件路径/本地路径)"""
+        if image_url.startswith(("http://", "https://")):
+            try:
+                # 为了不重复下载，先下载到临时文件，如果不在哈希库里再移动，在哈希库里则删除临时文件
+                temp_fd, temp_path = tempfile.mkstemp()
+                os.close(temp_fd)
+                await download_image_by_url(image_url, path=temp_path)
+                with open(temp_path, "rb") as f:
+                    return hashlib.md5(f.read()).hexdigest(), temp_path
+            except Exception as e:
+                logger.error(f"[本地表情包] 计算图片哈希失败: {e}")
+                if "temp_path" in locals() and os.path.exists(temp_path):
+                    os.remove(temp_path)
+                return None, None
+        elif image_url.startswith("file:///"):
+            local_path = image_url[8:]
+        elif os.path.exists(image_url):
+            local_path = image_url
+        else:
+            return None, None
+
+        if os.path.exists(local_path):
+            try:
+                with open(local_path, "rb") as f:
+                    return hashlib.md5(f.read()).hexdigest(), local_path
+            except Exception as e:
+                logger.error(f"[本地表情包] 计算本地图片哈希失败: {e}")
+        return None, None
+
+    async def _download_image_to_tag_dir(self, image_url: str, tag: str, source_path: str | None = None) -> str | None:
         """将指定图片下载或复制到对应表情标签目录。"""
         if tag not in self.data_manager.emoji_types:
             logger.warning(f"[本地表情包] 未知表情标签，无法保存图片: {tag}")
@@ -312,20 +344,36 @@ class LocalMemesPlugin(Star):
         target_path = os.path.join(tag_dir, f"learned_{uuid.uuid4().hex}{ext}")
 
         try:
-            if image_url.startswith(("http://", "https://")):
-                await download_image_by_url(image_url, path=target_path)
-            elif image_url.startswith("file:///"):
-                shutil.copyfile(image_url[8:], target_path)
-            elif os.path.exists(image_url):
-                shutil.copyfile(image_url, target_path)
+            if source_path and os.path.exists(source_path):
+                 # 如果 source_path 是刚才创建的临时文件，直接移动
+                 if source_path.startswith(tempfile.gettempdir()):
+                     shutil.move(source_path, target_path)
+                 else:
+                     shutil.copyfile(source_path, target_path)
             else:
-                logger.warning(f"[本地表情包] 不支持的图片引用，无法保存: {image_url}")
-                return None
+                # Fallback, theoretically shouldn't reach here if hash check is used properly
+                if image_url.startswith(("http://", "https://")):
+                    await download_image_by_url(image_url, path=target_path)
+                elif image_url.startswith("file:///"):
+                    shutil.copyfile(image_url[8:], target_path)
+                elif os.path.exists(image_url):
+                    shutil.copyfile(image_url, target_path)
+                else:
+                    logger.warning(f"[本地表情包] 不支持的图片引用，无法保存: {image_url}")
+                    return None
 
             logger.info(f"[本地表情包] 图片保存成功: {target_path}")
+
+            # 计算新图片的 md5 并加入 hash 集合
+            with open(target_path, "rb") as f:
+                self.data_manager.add_meme_hash(target_path, hashlib.md5(f.read()).hexdigest())
+
             return target_path
         except Exception as e:
-            logger.warning(f"[本地表情包] 下载图片失败: {image_url}，错误: {e}")
+            logger.warning(f"[本地表情包] 保存图片失败: {image_url}，错误: {e}")
+            # 如果是临时文件且保存失败，清理它
+            if source_path and source_path.startswith(tempfile.gettempdir()) and os.path.exists(source_path):
+                os.remove(source_path)
             return None
 
 
@@ -474,39 +522,61 @@ class LocalMemesPlugin(Star):
 
         image_urls = self._extract_image_urls_from_message(event)
 
-        if image_urls:
-            logger.info(
-                f"[本地表情包] 已从消息中提取到 {len(image_urls)} 个图片引用，正在调用LLM识别"
-            )
+        if not image_urls:
+            return
+
+        # 校验图片是否已存在
+        new_images = []
+        for url in image_urls:
+            img_hash, source_path = await self._calculate_image_hash(url)
+            if img_hash and self.data_manager.is_meme_exists(img_hash):
+                logger.info(f"[本地表情包] 检测到图片已存在于库中 (MD5: {img_hash})，跳过学习。")
+                if source_path and source_path.startswith(tempfile.gettempdir()) and os.path.exists(source_path):
+                    os.remove(source_path)
+                continue
+            new_images.append((url, source_path))
+
+        if not new_images:
+             logger.info("[本地表情包] 所有提取的图片均已存在于本地库中，本次取消AI识别及学习。")
+             return
+
+        image_urls_to_llm = [url for url, _ in new_images]
+
+        if image_urls_to_llm:
+            logger.info(f"[本地表情包] 已从消息中提取到 {len(image_urls_to_llm)} 个新图片引用，正在调用LLM识别")
             learning_prompt = self.ai_learning_config.get("prompt","")
             learning_prompt = self.data_manager.replace_placeholder(
                 learning_prompt,
                 group_id,
                 user_id
             )
-            result = await self.call_image_llm_action(umo, image_urls, learning_prompt)
+            result = await self.call_image_llm_action(umo, image_urls_to_llm, learning_prompt)
             tag, reason = self._parse_single_tag_result(result, scene="learning", allow_none=True)
 
             if tag is None:
                 logger.error(
                     f"[本地表情包] 表情包学习失败：分类解析未命中，reason={reason} raw={result!r}，已跳过保存"
                 )
+                # 清理未使用的临时文件
+                for _, source_path in new_images:
+                    if source_path and source_path.startswith(tempfile.gettempdir()) and os.path.exists(source_path):
+                        os.remove(source_path)
                 return
 
             success_count = 0
             failed_count = 0
 
-            for image_url in image_urls:
+            for url, source_path in new_images:
                 if need_replace:
                     self.data_manager.delete_random_meme_image(tag)
 
-                saved_path = await self._download_image_to_tag_dir(image_url, tag)
+                saved_path = await self._download_image_to_tag_dir(url, tag, source_path)
                 if saved_path:
                     success_count += 1
                     logger.info(f"[本地表情包] 已按分类 `{tag}` 保存图片: {saved_path}")
                 else:
                     failed_count += 1
-                    logger.error(f"[本地表情包] 按分类 `{tag}` 保存图片失败: {image_url}")
+                    logger.error(f"[本地表情包] 按分类 `{tag}` 保存图片失败: {url}")
 
             logger.info(
                 f"[本地表情包] 表情包学习完成：分类={tag}，成功={success_count}，失败={failed_count}"
