@@ -1,12 +1,16 @@
 import asyncio
 import hashlib
+import ipaddress
 import os
 import random
 import re
 import shutil
+import socket
 import tempfile
 import uuid
+from pathlib import Path
 from typing import Any
+from urllib.parse import urlparse
 
 from astrbot.api import AstrBotConfig, logger
 from astrbot.api.event import AstrMessageEvent, filter
@@ -22,14 +26,14 @@ class LocalMemesPlugin(Star):
     def __init__(self, context: Context, config: AstrBotConfig):
         super().__init__(context)
         self.data_dir = StarTools.get_data_dir(self.name)
-        self.data_manager = DataManager(config=config,data_dir = self.data_dir)
-        #初始化配置
+        self.data_manager = DataManager(config=config, data_dir=self.data_dir)
+        # 初始化配置
         self.config = config
-        self.ai_judge_config: dict[str, Any] = self.config.get("ai_judge",{})
-        self.ai_learning_config: dict[str, Any] = self.config.get("ai_learning",{})
+        self.ai_judge_config: dict[str, Any] = self.config.get("ai_judge", {})
+        self.ai_learning_config: dict[str, Any] = self.config.get("ai_learning", {})
         self.divide_group_config: dict[str, Any] = self.config.get("divide_group", {})
-        self.enable_ai_judge = self.ai_judge_config.get("enable",False)
-        self.enable_ai_learning = self.ai_learning_config.get("enable",False)
+        self.enable_ai_judge = self.ai_judge_config.get("enable", False)
+        self.enable_ai_learning = self.ai_learning_config.get("enable", False)
 
     async def initialize(self):
         """可选择实现异步的插件初始化方法，当实例化该插件类之后会自动调用该方法。"""
@@ -202,7 +206,9 @@ class LocalMemesPlugin(Star):
 
         for attempt in range(1, max_retry + 1):
             try:
-                logger.info(f"[本地表情包] 正在唤起LLM API: {provider_id} (重试次数 {attempt}/{max_retry})")
+                logger.info(
+                    f"[本地表情包] 正在唤起LLM API: {provider_id} (重试次数 {attempt}/{max_retry})"
+                )
                 llm_resp: LLMResponse = await self.context.llm_generate(  # type: ignore
                     chat_provider_id=provider_id,
                     prompt=prompt,
@@ -228,7 +234,6 @@ class LocalMemesPlugin(Star):
 
         logger.error(f"[本地表情包] 调用LLM API: {provider_id} 重试次数已用尽，最后错误：{last_err}")
         return ""
-
 
     async def call_image_llm_action(self, umo: str, image_urls: list[str], prompt: str) -> str:
         """调用图片识别API理解图片"""
@@ -279,7 +284,6 @@ class LocalMemesPlugin(Star):
         logger.error(f"[本地表情包] 调用图片LLM API: {provider_id} 重试次数已用尽，最后错误：{last_err}")
         return ""
 
-
     def _extract_image_urls_from_message(self, event: AstrMessageEvent) -> list[str]:
         """遍历消息中的图片消息段，提取其中的图片 URL/文件引用。"""
         image_urls: list[str] = []
@@ -298,84 +302,209 @@ class LocalMemesPlugin(Star):
 
         return image_urls
 
+    def _is_temp_file_path(self, path: str) -> bool:
+        """判断路径是否为系统临时目录下的真实文件。"""
+        try:
+            resolved = Path(path).resolve()
+            temp_root = Path(tempfile.gettempdir()).resolve()
+            return resolved.is_file() and temp_root in resolved.parents
+        except Exception:
+            return False
+
+    def _is_private_or_local_ip(self, ip_str: str) -> bool:
+        try:
+            ip_obj = ipaddress.ip_address(ip_str)
+        except ValueError:
+            return True
+
+        return (
+            ip_obj.is_private
+            or ip_obj.is_loopback
+            or ip_obj.is_link_local
+            or ip_obj.is_multicast
+            or ip_obj.is_reserved
+            or ip_obj.is_unspecified
+        )
+
+    def _is_url_host_allowed_by_whitelist(self, host: str) -> bool:
+        """域名白名单校验：为空则放行；非空时支持整段/后缀/域名层级标签匹配。"""
+        whitelist = self.ai_learning_config.get(
+            "download_domain_whitelist",
+            self.config.get("download_domain_whitelist", []),
+        ) or []
+
+        if isinstance(whitelist, str):
+            whitelist = [item.strip() for item in whitelist.split(",") if item.strip()]
+
+        normalized_host = host.lower().strip(".")
+        if not normalized_host:
+            return False
+
+        host_labels = [label for label in normalized_host.split(".") if label]
+        normalized_allow = {
+            str(item).lower().strip(".").lstrip("*.").strip()
+            for item in whitelist
+            if str(item).strip()
+        }
+
+        if not normalized_allow:
+            return True
+
+        for allowed in normalized_allow:
+            # 整段域名匹配
+            if normalized_host == allowed:
+                return True
+
+            # 后缀匹配（支持二级/三级/... 子域名）
+            if normalized_host.endswith(f".{allowed}"):
+                return True
+
+        return False
+
+    def _is_safe_remote_image_url(self, image_url: str) -> bool:
+        """远程图片 URL 安全校验：协议、白名单、内网地址拦截。"""
+        try:
+            parsed = urlparse(image_url)
+        except Exception:
+            logger.warning(f"[本地表情包] URL 解析失败，已拒绝: {image_url!r}")
+            return False
+
+        if parsed.scheme not in {"http", "https"}:
+            logger.warning(f"[本地表情包] 非 HTTP/HTTPS 图片引用已拒绝: {image_url!r}")
+            return False
+
+        if parsed.username or parsed.password:
+            logger.warning(f"[本地表情包] 含鉴权信息的 URL 已拒绝: {image_url!r}")
+            return False
+
+        hostname = parsed.hostname
+        if not hostname:
+            logger.warning(f"[本地表情包] URL 缺少主机名，已拒绝: {image_url!r}")
+            return False
+
+        if not self._is_url_host_allowed_by_whitelist(hostname):
+            logger.warning(f"[本地表情包] 域名不在白名单中，已拒绝: host={hostname}")
+            return False
+
+        try:
+            addr_infos = socket.getaddrinfo(
+                hostname,
+                parsed.port or (443 if parsed.scheme == "https" else 80),
+                proto=socket.IPPROTO_TCP,
+            )
+        except socket.gaierror as e:
+            logger.warning(f"[本地表情包] 域名解析失败，已拒绝: host={hostname}, err={e}")
+            return False
+
+        seen_ips: set[str] = set()
+        for info in addr_infos:
+            raw_ip = info[4][0]
+            if not isinstance(raw_ip, str):
+                continue
+            ip = raw_ip
+
+            if ip in seen_ips:
+                continue
+            seen_ips.add(ip)
+
+            if self._is_private_or_local_ip(ip):
+                logger.warning(
+                    f"[本地表情包] 检测到内网/本地地址，已拒绝下载: host={hostname}, ip={ip}"
+                )
+                return False
+
+        return True
+
+    def _detect_image_extension(self, file_path: str) -> str | None:
+        """通过文件头魔数识别图片格式，返回标准扩展名。"""
+        try:
+            with open(file_path, "rb") as f:
+                header = f.read(64)
+        except Exception as e:
+            logger.warning(f"[本地表情包] 读取图片头失败: {file_path}, err={e}")
+            return None
+
+        if header.startswith(b"\x89PNG\r\n\x1a\n"):
+            return ".png"
+        if header.startswith(b"\xff\xd8\xff"):
+            return ".jpg"
+        if header.startswith((b"GIF87a", b"GIF89a")):
+            return ".gif"
+        if len(header) >= 12 and header.startswith(b"RIFF") and header[8:12] == b"WEBP":
+            return ".webp"
+
+        return None
+
     async def _calculate_image_hash(self, image_url: str) -> tuple[str | None, str | None]:
-        """计算远程或本地图片的 MD5，返回 (md5_hash, 临时文件路径/本地路径)"""
-        if image_url.startswith(("http://", "https://")):
-            try:
-                # 为了不重复下载，先下载到临时文件，如果不在哈希库里再移动，在哈希库里则删除临时文件
-                temp_fd, temp_path = tempfile.mkstemp()
-                os.close(temp_fd)
-                await download_image_by_url(image_url, path=temp_path)
-                with open(temp_path, "rb") as f:
-                    return hashlib.md5(f.read()).hexdigest(), temp_path
-            except Exception as e:
-                logger.error(f"[本地表情包] 计算图片哈希失败: {e}")
-                if "temp_path" in locals() and os.path.exists(temp_path):
-                    os.remove(temp_path)
-                return None, None
-        elif image_url.startswith("file:///"):
-            local_path = image_url[8:]
-        elif os.path.exists(image_url):
-            local_path = image_url
-        else:
+        """仅对安全远程 URL 下载并计算图片 MD5，返回 (md5_hash, 临时文件路径)。"""
+        if not image_url.startswith(("http://", "https://")):
+            logger.warning(f"[本地表情包] 已拒绝非远程图片引用: {image_url!r}")
             return None, None
 
-        if os.path.exists(local_path):
-            try:
-                with open(local_path, "rb") as f:
-                    return hashlib.md5(f.read()).hexdigest(), local_path
-            except Exception as e:
-                logger.error(f"[本地表情包] 计算本地图片哈希失败: {e}")
-        return None, None
+        if not self._is_safe_remote_image_url(image_url):
+            return None, None
 
-    async def _download_image_to_tag_dir(self, image_url: str, tag: str, source_path: str | None = None) -> str | None:
-        """将指定图片下载或复制到对应表情标签目录。"""
+        temp_path: str | None = None
+        try:
+            temp_fd, temp_path = tempfile.mkstemp(prefix="localmemes_", suffix=".img")
+            os.close(temp_fd)
+
+            await download_image_by_url(image_url, path=temp_path)
+
+            ext = self._detect_image_extension(temp_path)
+            if not ext:
+                logger.warning(f"[本地表情包] 下载内容不是受支持图片格式，已拒绝: {image_url!r}")
+                os.remove(temp_path)
+                return None, None
+
+            with open(temp_path, "rb") as f:
+                md5_hash = hashlib.md5(f.read()).hexdigest()
+
+            return md5_hash, temp_path
+        except Exception as e:
+            logger.error(f"[本地表情包] 计算图片哈希失败: {e}")
+            if temp_path and os.path.exists(temp_path):
+                os.remove(temp_path)
+            return None, None
+
+    async def _download_image_to_tag_dir(
+        self, image_url: str, tag: str, source_path: str | None = None
+    ) -> str | None:
+        """将已校验的临时图片文件移动到对应表情标签目录。"""
         if tag not in self.data_manager.emoji_types:
             logger.warning(f"[本地表情包] 未知表情标签，无法保存图片: {tag}")
             return None
 
-        tag_dir = os.path.join(self.data_manager.base_dir, tag)
-        os.makedirs(tag_dir, exist_ok=True)
+        if not source_path or not self._is_temp_file_path(source_path):
+            logger.warning(f"[本地表情包] 非受信任临时文件，已拒绝保存: {image_url!r}")
+            return None
 
-        ext = os.path.splitext(image_url.split("?")[0])[1].lower()
-        if ext not in {".png", ".jpg", ".jpeg", ".gif", ".webp"}:
-            ext = ".jpg"
-
-        target_path = os.path.join(tag_dir, f"learned_{uuid.uuid4().hex}{ext}")
-
-        try:
-            if source_path and os.path.exists(source_path):
-                 # 如果 source_path 是刚才创建的临时文件，直接移动
-                 if source_path.startswith(tempfile.gettempdir()):
-                     shutil.move(source_path, target_path)
-                 else:
-                     shutil.copyfile(source_path, target_path)
-            else:
-                # Fallback, theoretically shouldn't reach here if hash check is used properly
-                if image_url.startswith(("http://", "https://")):
-                    await download_image_by_url(image_url, path=target_path)
-                elif image_url.startswith("file:///"):
-                    shutil.copyfile(image_url[8:], target_path)
-                elif os.path.exists(image_url):
-                    shutil.copyfile(image_url, target_path)
-                else:
-                    logger.warning(f"[本地表情包] 不支持的图片引用，无法保存: {image_url}")
-                    return None
-
-            logger.info(f"[本地表情包] 图片保存成功: {target_path}")
-
-            # 计算新图片的 md5 并加入 hash 集合
-            with open(target_path, "rb") as f:
-                self.data_manager.add_meme_hash(target_path, hashlib.md5(f.read()).hexdigest())
-
-            return target_path
-        except Exception as e:
-            logger.warning(f"[本地表情包] 保存图片失败: {image_url}，错误: {e}")
-            # 如果是临时文件且保存失败，清理它
-            if source_path and source_path.startswith(tempfile.gettempdir()) and os.path.exists(source_path):
+        ext = self._detect_image_extension(source_path)
+        if not ext:
+            logger.warning(f"[本地表情包] 图片格式校验失败，已拒绝保存: {image_url!r}")
+            if os.path.exists(source_path):
                 os.remove(source_path)
             return None
 
+        tag_dir = self.data_manager.base_dir / tag
+        tag_dir.mkdir(parents=True, exist_ok=True)
+        target_path = tag_dir / f"learned_{uuid.uuid4().hex}{ext}"
+
+        try:
+            shutil.move(source_path, str(target_path))
+            logger.info(f"[本地表情包] 图片保存成功: {target_path}")
+
+            with open(target_path, "rb") as f:
+                self.data_manager.add_meme_hash(str(target_path), hashlib.md5(f.read()).hexdigest())
+
+            return str(target_path)
+        except Exception as e:
+            logger.warning(f"[本地表情包] 保存图片失败: {image_url}，错误: {e}")
+            if os.path.exists(source_path):
+                os.remove(source_path)
+            if target_path.exists():
+                target_path.unlink(missing_ok=True)
+            return None
 
     @filter.on_llm_request()
     async def on_llm_request(self, event: AstrMessageEvent, req: ProviderRequest):
@@ -388,15 +517,17 @@ class LocalMemesPlugin(Star):
 
         logger.info(f"当前模式：{'AI规划模式' if self.enable_ai_judge else '文本替换模式'}")
 
-        group_id = getattr(event.message_obj, "group_id", "")
-        user_id = getattr(event.message_obj.sender, "user_id", "")
+        message_obj = getattr(event, "message_obj", None)
+        group_id = getattr(message_obj, "group_id", "")
+        sender = getattr(message_obj, "sender", None)
+        user_id = getattr(sender, "user_id", "")
 
         try:
-            emoji_replace_prompt = self.config.get("emoji_replace_prompt","")
+            emoji_replace_prompt = self.config.get("emoji_replace_prompt", "")
             emoji_replace_prompt = self.data_manager.replace_placeholder(
                 emoji_replace_prompt,
                 group_id=str(group_id),
-                user_id=str(user_id)
+                user_id=str(user_id),
             )
             req.system_prompt += emoji_replace_prompt
             logger.info("[本地表情包] 当前使用文本替换模式，已在系统提示词添加表情包设定！")
@@ -420,7 +551,6 @@ class LocalMemesPlugin(Star):
                     node.text = re.sub(r"<([^>]+)>", "", node.text)
                     logger.info(f"[本地表情包] 解析到表情: {node.text}")
 
-
         if tags:
             # 存储标签到 event 中，以便 after_message_sent 使用
             setattr(event, "_detected_tags", tags)
@@ -443,7 +573,7 @@ class LocalMemesPlugin(Star):
             ai_judge_prompt = self.data_manager.replace_placeholder(
                 ai_judge_prompt,
                 group_id,
-                user_id
+                user_id,
             )
             ai_judge_prompt += f"\n【输入文本】\n{event.message_str}"
 
@@ -488,7 +618,7 @@ class LocalMemesPlugin(Star):
         if not sent:
             logger.info(f"[本地表情包] 本次未发图（标签存在但无可用图片）：tags={tags}")
 
-    @filter.event_message_type(filter.EventMessageType.ALL,priority=5)
+    @filter.event_message_type(filter.EventMessageType.ALL, priority=5)
     async def on_learning_memes(self, event: AstrMessageEvent):
         """从消息中识别图片表情并学习到相应分类中"""
         if not self.enable_ai_learning:
@@ -512,13 +642,19 @@ class LocalMemesPlugin(Star):
             current_memes_count = self.data_manager.get_total_memes_count()
             if current_memes_count >= max_memes:
                 if random_replace:
-                    logger.info(f"[本地表情包] 检测到图片，当前表情数量 ({current_memes_count} / {max_memes})，已达到上限，已启用随机替换，继续学习。")
+                    logger.info(
+                        f"[本地表情包] 检测到图片，当前表情数量 ({current_memes_count} / {max_memes})，已达到上限，已启用随机替换，继续学习。"
+                    )
                     need_replace = True
                 else:
-                    logger.info(f"[本地表情包] 检测到图片，当前表情数量 ({current_memes_count} / {max_memes})，已达到上限，停止学习。")
+                    logger.info(
+                        f"[本地表情包] 检测到图片，当前表情数量 ({current_memes_count} / {max_memes})，已达到上限，停止学习。"
+                    )
                     return
             else:
-                logger.info(f"[本地表情包] 检测到图片，当前表情数量 ({current_memes_count} / {max_memes})，开始学习")
+                logger.info(
+                    f"[本地表情包] 检测到图片，当前表情数量 ({current_memes_count} / {max_memes})，开始学习"
+                )
 
         image_urls = self._extract_image_urls_from_message(event)
 
@@ -529,26 +665,33 @@ class LocalMemesPlugin(Star):
         new_images = []
         for url in image_urls:
             img_hash, source_path = await self._calculate_image_hash(url)
-            if img_hash and self.data_manager.is_meme_exists(img_hash):
+            if not img_hash or not source_path:
+                logger.warning(f"[本地表情包] 图片预处理失败或被安全策略拦截，跳过学习: {url!r}")
+                continue
+
+            if self.data_manager.is_meme_exists(img_hash):
                 logger.info(f"[本地表情包] 检测到图片已存在于库中 (MD5: {img_hash})，跳过学习。")
-                if source_path and source_path.startswith(tempfile.gettempdir()) and os.path.exists(source_path):
+                if self._is_temp_file_path(source_path):
                     os.remove(source_path)
                 continue
+
             new_images.append((url, source_path))
 
         if not new_images:
-             logger.info("[本地表情包] 所有提取的图片均已存在于本地库中，本次取消AI识别及学习。")
-             return
+            logger.info("[本地表情包] 所有提取的图片均已存在于本地库中，本次取消AI识别及学习。")
+            return
 
         image_urls_to_llm = [url for url, _ in new_images]
 
         if image_urls_to_llm:
-            logger.info(f"[本地表情包] 已从消息中提取到 {len(image_urls_to_llm)} 个新图片引用，正在调用LLM识别")
-            learning_prompt = self.ai_learning_config.get("prompt","")
+            logger.info(
+                f"[本地表情包] 已从消息中提取到 {len(image_urls_to_llm)} 个新图片引用，正在调用LLM识别"
+            )
+            learning_prompt = self.ai_learning_config.get("prompt", "")
             learning_prompt = self.data_manager.replace_placeholder(
                 learning_prompt,
                 group_id,
-                user_id
+                user_id,
             )
             result = await self.call_image_llm_action(umo, image_urls_to_llm, learning_prompt)
             tag, reason = self._parse_single_tag_result(result, scene="learning", allow_none=True)
@@ -559,7 +702,7 @@ class LocalMemesPlugin(Star):
                 )
                 # 清理未使用的临时文件
                 for _, source_path in new_images:
-                    if source_path and source_path.startswith(tempfile.gettempdir()) and os.path.exists(source_path):
+                    if source_path and self._is_temp_file_path(source_path):
                         os.remove(source_path)
                 return
 
@@ -581,8 +724,6 @@ class LocalMemesPlugin(Star):
             logger.info(
                 f"[本地表情包] 表情包学习完成：分类={tag}，成功={success_count}，失败={failed_count}"
             )
-
-
 
     async def terminate(self):
         """可选择实现异步的插件销毁方法，当插件被卸载/停用时会调用。"""

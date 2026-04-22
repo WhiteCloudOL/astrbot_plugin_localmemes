@@ -38,7 +38,7 @@ class PlaceHolder:
 
 
 class MemeTypes:
-    types = dict(DEFAULT_MEME_TYPES)
+    types: Mapping[str, str] = MappingProxyType(dict(DEFAULT_MEME_TYPES))
 
 
 # 兼容旧引用
