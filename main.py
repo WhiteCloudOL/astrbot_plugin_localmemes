@@ -191,40 +191,51 @@ class LocalMemesPlugin(Star):
 
         return token, "ok"
 
-    async def call_llm_action(self, umo: str, prompt: str) -> str:
-        """调用LLM处理, type: learn, answer, image, planner"""
-        provider_id = self.ai_judge_config.get("provider_id", "")
-        max_retry = int(self.ai_judge_config.get("max_retry", 3))
-
+    async def _call_llm_with_retry(
+        self,
+        *,
+        provider_id: str,
+        max_retry: int,
+        prompt: str,
+        image_urls: list[str] | None = None,
+    ) -> str:
+        """统一的 LLM 调用重试包装器。"""
         if max_retry < 1:
             max_retry = 1
 
-        if not provider_id:
-            provider_id = await self.context.get_current_chat_provider_id(umo=umo)  # type: ignore
+        call_name = "图片LLM API" if image_urls else "LLM API"
+        success_name = "图片LLM" if image_urls else "LLM"
+        empty_err = "Image LLM returned empty completion_text" if image_urls else "LLM returned empty completion_text"
 
         last_err: Exception | None = None
 
         for attempt in range(1, max_retry + 1):
             try:
                 logger.info(
-                    f"[本地表情包] 正在唤起LLM API: {provider_id} (重试次数 {attempt}/{max_retry})"
+                    f"[本地表情包] 正在唤起{call_name}: {provider_id} (重试次数 {attempt}/{max_retry})"
                 )
+                request_kwargs: dict[str, Any] = {
+                    "chat_provider_id": provider_id,
+                    "prompt": prompt,
+                }
+                if image_urls:
+                    request_kwargs["image_urls"] = image_urls
+
                 llm_resp: LLMResponse = await self.context.llm_generate(  # type: ignore
-                    chat_provider_id=provider_id,
-                    prompt=prompt,
+                    **request_kwargs
                 )
 
                 llm_res = (llm_resp.completion_text or "").strip()
                 if not llm_res:
-                    raise ValueError("LLM returned empty completion_text")
+                    raise ValueError(empty_err)
 
-                logger.info(f"[本地表情包] LLM {provider_id} 响应成功: {llm_res}")
+                logger.info(f"[本地表情包] {success_name} {provider_id} 响应成功: {llm_res}")
                 return llm_res
 
             except Exception as e:
                 last_err = e
                 logger.error(
-                    f"[本地表情包] 调用LLM API: {provider_id} 失败 (attempt {attempt}/{max_retry})，原因：{e}"
+                    f"[本地表情包] 调用{call_name}: {provider_id} 失败 (attempt {attempt}/{max_retry})，原因：{e}"
                 )
                 if attempt < max_retry:
                     # 退避：1,2,4,8... 秒，上限 8 秒 + 随机抖动
@@ -232,15 +243,27 @@ class LocalMemesPlugin(Star):
                     delay = base + random.uniform(0, 0.5)
                     await asyncio.sleep(delay)
 
-        logger.error(f"[本地表情包] 调用LLM API: {provider_id} 重试次数已用尽，最后错误：{last_err}")
+        logger.error(f"[本地表情包] 调用{call_name}: {provider_id} 重试次数已用尽，最后错误：{last_err}")
         return ""
+
+    async def call_llm_action(self, umo: str, prompt: str) -> str:
+        """调用LLM处理, type: learn, answer, image, planner"""
+        provider_id = self.ai_judge_config.get("provider_id", "")
+        max_retry = int(self.ai_judge_config.get("max_retry", 3))
+
+        if not provider_id:
+            provider_id = await self.context.get_current_chat_provider_id(umo=umo)  # type: ignore
+
+        return await self._call_llm_with_retry(
+            provider_id=provider_id,
+            max_retry=max_retry,
+            prompt=prompt,
+        )
 
     async def call_image_llm_action(self, umo: str, image_urls: list[str], prompt: str) -> str:
         """调用图片识别API理解图片"""
         provider_id = self.ai_learning_config.get("provider_id", "")
         max_retry = int(self.ai_learning_config.get("max_retry", 3))
-        if max_retry < 1:
-            max_retry = 1
 
         if not provider_id:
             provider_id = await self.context.get_current_chat_provider_id(umo=umo)  # type: ignore
@@ -250,39 +273,12 @@ class LocalMemesPlugin(Star):
             logger.error(f"[本地表情包] 未找到ID为 {provider_id} 的LLM提供商，请在配置中修改图片识别模型")
             return ""
 
-        last_err: Exception | None = None
-
-        for attempt in range(1, max_retry + 1):
-            try:
-                logger.info(
-                    f"[本地表情包] 正在唤起图片LLM API: {provider_id} (重试次数 {attempt}/{max_retry})"
-                )
-                llm_resp: LLMResponse = await self.context.llm_generate(  # type: ignore
-                    chat_provider_id=provider_id,
-                    image_urls=image_urls,
-                    prompt=f"{prompt}",
-                )
-
-                llm_res = (llm_resp.completion_text or "").strip()
-                if not llm_res:
-                    raise ValueError("Image LLM returned empty completion_text")
-
-                logger.info(f"[本地表情包] 图片LLM {provider_id} 响应成功: {llm_res}")
-                return llm_res
-
-            except Exception as e:
-                last_err = e
-                logger.error(
-                    f"[本地表情包] 调用图片LLM API: {provider_id} 失败 (attempt {attempt}/{max_retry})，原因：{e}"
-                )
-                if attempt < max_retry:
-                    # 退避：1,2,4,8... 秒，上限 8 秒 + 随机抖动
-                    base = min(2 ** (attempt - 1), 8)
-                    delay = base + random.uniform(0, 0.5)
-                    await asyncio.sleep(delay)
-
-        logger.error(f"[本地表情包] 调用图片LLM API: {provider_id} 重试次数已用尽，最后错误：{last_err}")
-        return ""
+        return await self._call_llm_with_retry(
+            provider_id=provider_id,
+            max_retry=max_retry,
+            prompt=prompt,
+            image_urls=image_urls,
+        )
 
     def _extract_image_urls_from_message(self, event: AstrMessageEvent) -> list[str]:
         """遍历消息中的图片消息段，提取其中的图片 URL/文件引用。"""
@@ -361,40 +357,21 @@ class LocalMemesPlugin(Star):
 
         return False
 
-    def _is_safe_remote_image_url(self, image_url: str) -> bool:
-        """远程图片 URL 安全校验：协议、白名单、内网地址拦截。"""
+    async def _resolve_public_ips(self, hostname: str, port: int) -> set[str] | None:
+        """解析主机并仅返回公网可用 IP；若解析失败或命中内网地址则返回 None。"""
         try:
-            parsed = urlparse(image_url)
-        except Exception:
-            logger.warning(f"[本地表情包] URL 解析失败，已拒绝: {image_url!r}")
-            return False
-
-        if parsed.scheme not in {"http", "https"}:
-            logger.warning(f"[本地表情包] 非 HTTP/HTTPS 图片引用已拒绝: {image_url!r}")
-            return False
-
-        if parsed.username or parsed.password:
-            logger.warning(f"[本地表情包] 含鉴权信息的 URL 已拒绝: {image_url!r}")
-            return False
-
-        hostname = parsed.hostname
-        if not hostname:
-            logger.warning(f"[本地表情包] URL 缺少主机名，已拒绝: {image_url!r}")
-            return False
-
-        if not self._is_url_host_allowed_by_whitelist(hostname):
-            logger.warning(f"[本地表情包] 域名不在白名单中，已拒绝: host={hostname}")
-            return False
-
-        try:
-            addr_infos = socket.getaddrinfo(
+            loop = asyncio.get_running_loop()
+            addr_infos = await loop.getaddrinfo(
                 hostname,
-                parsed.port or (443 if parsed.scheme == "https" else 80),
+                port,
                 proto=socket.IPPROTO_TCP,
             )
         except socket.gaierror as e:
             logger.warning(f"[本地表情包] 域名解析失败，已拒绝: host={hostname}, err={e}")
-            return False
+            return None
+        except Exception as e:
+            logger.warning(f"[本地表情包] 域名解析异常，已拒绝: host={hostname}, err={e}")
+            return None
 
         seen_ips: set[str] = set()
         for info in addr_infos:
@@ -411,9 +388,41 @@ class LocalMemesPlugin(Star):
                 logger.warning(
                     f"[本地表情包] 检测到内网/本地地址，已拒绝下载: host={hostname}, ip={ip}"
                 )
-                return False
+                return None
 
-        return True
+        return seen_ips
+
+    async def _is_safe_remote_image_url(self, image_url: str) -> tuple[bool, set[str]]:
+        """远程图片 URL 安全校验：协议、白名单、内网地址拦截。"""
+        try:
+            parsed = urlparse(image_url)
+        except Exception:
+            logger.warning(f"[本地表情包] URL 解析失败，已拒绝: {image_url!r}")
+            return False, set()
+
+        if parsed.scheme not in {"http", "https"}:
+            logger.warning(f"[本地表情包] 非 HTTP/HTTPS 图片引用已拒绝: {image_url!r}")
+            return False, set()
+
+        if parsed.username or parsed.password:
+            logger.warning(f"[本地表情包] 含鉴权信息的 URL 已拒绝: {image_url!r}")
+            return False, set()
+
+        hostname = parsed.hostname
+        if not hostname:
+            logger.warning(f"[本地表情包] URL 缺少主机名，已拒绝: {image_url!r}")
+            return False, set()
+
+        if not self._is_url_host_allowed_by_whitelist(hostname):
+            logger.warning(f"[本地表情包] 域名不在白名单中，已拒绝: host={hostname}")
+            return False, set()
+
+        port = parsed.port or (443 if parsed.scheme == "https" else 80)
+        resolved_ips = await self._resolve_public_ips(hostname, port)
+        if not resolved_ips:
+            return False, set()
+
+        return True, resolved_ips
 
     def _detect_image_extension(self, file_path: str) -> str | None:
         """通过文件头魔数识别图片格式，返回标准扩展名。"""
@@ -435,13 +444,22 @@ class LocalMemesPlugin(Star):
 
         return None
 
+    def _calculate_file_md5(self, file_path: str, chunk_size: int = 8192) -> str:
+        """分块计算文件 MD5，避免一次性读入大文件导致内存峰值。"""
+        digest = hashlib.md5()
+        with open(file_path, "rb") as f:
+            for chunk in iter(lambda: f.read(chunk_size), b""):
+                digest.update(chunk)
+        return digest.hexdigest()
+
     async def _calculate_image_hash(self, image_url: str) -> tuple[str | None, str | None]:
         """仅对安全远程 URL 下载并计算图片 MD5，返回 (md5_hash, 临时文件路径)。"""
         if not image_url.startswith(("http://", "https://")):
             logger.warning(f"[本地表情包] 已拒绝非远程图片引用: {image_url!r}")
             return None, None
 
-        if not self._is_safe_remote_image_url(image_url):
+        safe, initial_ips = await self._is_safe_remote_image_url(image_url)
+        if not safe:
             return None, None
 
         temp_path: str | None = None
@@ -451,15 +469,25 @@ class LocalMemesPlugin(Star):
 
             await download_image_by_url(image_url, path=temp_path)
 
+            # DNS Rebinding 缓解：下载完成后再次解析，若结果完全不重叠则拒绝
+            parsed = urlparse(image_url)
+            hostname = parsed.hostname or ""
+            port = parsed.port or (443 if parsed.scheme == "https" else 80)
+            latest_ips = await self._resolve_public_ips(hostname, port) if hostname else None
+            if not latest_ips or initial_ips.isdisjoint(latest_ips):
+                logger.warning(
+                    "[本地表情包] 检测到疑似 DNS Rebinding（前后解析 IP 无重叠），已拒绝保存该图片"
+                )
+                os.remove(temp_path)
+                return None, None
+
             ext = self._detect_image_extension(temp_path)
             if not ext:
                 logger.warning(f"[本地表情包] 下载内容不是受支持图片格式，已拒绝: {image_url!r}")
                 os.remove(temp_path)
                 return None, None
 
-            with open(temp_path, "rb") as f:
-                md5_hash = hashlib.md5(f.read()).hexdigest()
-
+            md5_hash = self._calculate_file_md5(temp_path)
             return md5_hash, temp_path
         except Exception as e:
             logger.error(f"[本地表情包] 计算图片哈希失败: {e}")
@@ -494,8 +522,10 @@ class LocalMemesPlugin(Star):
             shutil.move(source_path, str(target_path))
             logger.info(f"[本地表情包] 图片保存成功: {target_path}")
 
-            with open(target_path, "rb") as f:
-                self.data_manager.add_meme_hash(str(target_path), hashlib.md5(f.read()).hexdigest())
+            self.data_manager.add_meme_hash(
+                str(target_path),
+                self._calculate_file_md5(str(target_path)),
+            )
 
             return str(target_path)
         except Exception as e:

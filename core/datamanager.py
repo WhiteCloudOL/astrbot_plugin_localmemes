@@ -1,6 +1,9 @@
 import hashlib
 import json
+import os
 import random
+import tempfile
+import threading
 from pathlib import Path
 from typing import Any
 
@@ -10,57 +13,88 @@ from .models import DEFAULT_MEME_TYPES, PlaceHolder
 
 
 class DataManager:
+    VALID_IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".gif", ".webp"}
+
     def __init__(self, config: AstrBotConfig, data_dir: Path):
         self.config = config
         self.emoji_types = self._load_emoji_types()
         self.base_dir = data_dir / "memes"
         self.hash_file = data_dir / "memes_hash.json"
+        # 保护哈希内存状态与落盘过程，避免并发写入造成竞态
+        self._hash_lock = threading.RLock()
         self._init_folders()
         self._init_meme_hashes()
 
+    def _calculate_file_md5(self, file_path: Path, chunk_size: int = 8192) -> str:
+        digest = hashlib.md5()
+        with open(file_path, "rb") as f:
+            for chunk in iter(lambda: f.read(chunk_size), b""):
+                digest.update(chunk)
+        return digest.hexdigest()
+
+    def _load_saved_hashes(self) -> dict[str, dict[str, Any]]:
+        if not self.hash_file.exists():
+            return {}
+
+        try:
+            with open(self.hash_file, encoding="utf-8") as f:
+                loaded = json.load(f)
+        except Exception as e:
+            logger.error(f"[本地表情包] 读取哈希文件失败: {e}")
+            return {}
+
+        if not isinstance(loaded, dict):
+            return {}
+
+        # 仅保留结构合法的条目，避免后续处理时反复判断
+        normalized: dict[str, dict[str, Any]] = {}
+        for rel_path, item in loaded.items():
+            if isinstance(rel_path, str) and isinstance(item, dict):
+                if "hash" in item and "mtime" in item:
+                    normalized[rel_path] = item
+        return normalized
+
+    def _iter_meme_image_files(self):
+        if not self.base_dir.exists():
+            return
+
+        for tag_dir in self.base_dir.iterdir():
+            if not tag_dir.is_dir():
+                continue
+            for p in tag_dir.iterdir():
+                if p.is_file() and p.suffix.lower() in self.VALID_IMAGE_EXTENSIONS:
+                    yield p
+
+    def _build_file_hash_record(
+        self,
+        file_path: Path,
+        saved_data: dict[str, dict[str, Any]],
+    ) -> tuple[str, dict[str, Any], bool]:
+        rel_path = str(file_path.relative_to(self.base_dir)).replace("\\", "/")
+        mtime = file_path.stat().st_mtime
+
+        cached = saved_data.get(rel_path)
+        if isinstance(cached, dict) and cached.get("mtime") == mtime and "hash" in cached:
+            return rel_path, cached, False
+
+        md5_hash = self._calculate_file_md5(file_path)
+        return rel_path, {"hash": md5_hash, "mtime": mtime}, True
+
     def _init_meme_hashes(self):
-        self.meme_hashes = {}  # {rel_path: {"hash": md5_hash, "mtime": mtime}}
-        saved_data = {}
-
-        if self.hash_file.exists():
-            try:
-                with open(self.hash_file, encoding="utf-8") as f:
-                    saved_data = json.load(f)
-            except Exception as e:
-                logger.error(f"[本地表情包] 读取哈希文件失败: {e}")
-
-        if not isinstance(saved_data, dict):
-            saved_data = {}
-
+        self.meme_hashes: dict[str, dict[str, Any]] = {}
+        saved_data = self._load_saved_hashes()
         has_changes = False
-        valid_extensions = {".png", ".jpg", ".jpeg", ".gif", ".webp"}
 
-        if self.base_dir.exists():
-            for tag_dir in self.base_dir.iterdir():
-                if tag_dir.is_dir():
-                    for p in tag_dir.iterdir():
-                        if p.is_file() and p.suffix.lower() in valid_extensions:
-                            try:
-                                rel_path = str(p.relative_to(self.base_dir)).replace("\\", "/")
-                                stat = p.stat()
-                                mtime = stat.st_mtime
+        for file_path in self._iter_meme_image_files() or []:
+            try:
+                rel_path, record, changed = self._build_file_hash_record(file_path, saved_data)
+                self.meme_hashes[rel_path] = record
+                if changed:
+                    has_changes = True
+            except Exception as e:
+                logger.error(f"[本地表情包] 处理文件哈希失败: {file_path}, {e}")
 
-                                needs_hash = True
-                                if rel_path in saved_data:
-                                    item = saved_data[rel_path]
-                                    if isinstance(item, dict) and item.get("mtime") == mtime and "hash" in item:
-                                        self.meme_hashes[rel_path] = item
-                                        needs_hash = False
-
-                                if needs_hash:
-                                    with open(p, "rb") as f:
-                                        md5_hash = hashlib.md5(f.read()).hexdigest()
-                                    self.meme_hashes[rel_path] = {"hash": md5_hash, "mtime": mtime}
-                                    has_changes = True
-                            except Exception as e:
-                                logger.error(f"[本地表情包] 处理文件哈希失败: {p}, {e}")
-
-        # Check if there are any files in saved_data that no longer exist
+        # 已删除文件也会触发重写，清理过期记录
         if len(self.meme_hashes) != len(saved_data):
             has_changes = True
 
@@ -69,17 +103,32 @@ class DataManager:
 
     def _save_hashes(self):
         try:
-            with open(self.hash_file, "w", encoding="utf-8") as f:
-                json.dump(self.meme_hashes, f, ensure_ascii=False, indent=2)
+            with self._hash_lock:
+                self.hash_file.parent.mkdir(parents=True, exist_ok=True)
+
+                # 先写临时文件，再原子替换，降低并发/异常导致的文件损坏概率
+                with tempfile.NamedTemporaryFile(
+                    "w",
+                    encoding="utf-8",
+                    dir=self.hash_file.parent,
+                    prefix=f"{self.hash_file.stem}_",
+                    suffix=".tmp",
+                    delete=False,
+                ) as tmp_file:
+                    json.dump(self.meme_hashes, tmp_file, ensure_ascii=False, indent=2)
+                    tmp_path = Path(tmp_file.name)
+
+                os.replace(tmp_path, self.hash_file)
         except Exception as e:
             logger.error(f"[本地表情包] 保存哈希文件失败: {e}")
 
     def is_meme_exists(self, md5_hash: str) -> bool:
         if not hasattr(self, "meme_hashes"):
             return False
-        for item in self.meme_hashes.values():
-            if isinstance(item, dict) and item.get("hash") == md5_hash:
-                return True
+        with self._hash_lock:
+            for item in self.meme_hashes.values():
+                if isinstance(item, dict) and item.get("hash") == md5_hash:
+                    return True
         return False
 
     def add_meme_hash(self, file_path: str, md5_hash: str):
@@ -90,8 +139,9 @@ class DataManager:
             p = Path(file_path)
             rel_path = str(p.relative_to(self.base_dir)).replace("\\", "/")
             stat = p.stat()
-            self.meme_hashes[rel_path] = {"hash": md5_hash, "mtime": stat.st_mtime}
-            self._save_hashes()
+            with self._hash_lock:
+                self.meme_hashes[rel_path] = {"hash": md5_hash, "mtime": stat.st_mtime}
+                self._save_hashes()
         except Exception as e:
             logger.error(f"[本地表情包] 添加图片哈希记录失败: {e}")
 
@@ -102,9 +152,10 @@ class DataManager:
         try:
             p = Path(file_path)
             rel_path = str(p.relative_to(self.base_dir)).replace("\\", "/")
-            if rel_path in self.meme_hashes:
-                del self.meme_hashes[rel_path]
-                self._save_hashes()
+            with self._hash_lock:
+                if rel_path in self.meme_hashes:
+                    del self.meme_hashes[rel_path]
+                    self._save_hashes()
         except Exception as e:
             logger.error(f"[本地表情包] 删除图片哈希记录失败: {e}")
 
@@ -126,9 +177,10 @@ class DataManager:
         if not tag_dir.exists():
             return False
 
-        valid_extensions = {".png", ".jpg", ".jpeg", ".gif", ".webp"}
         try:
-            files = [p for p in tag_dir.iterdir() if p.is_file() and p.suffix.lower() in valid_extensions]
+            files = [
+                p for p in tag_dir.iterdir() if p.is_file() and p.suffix.lower() in self.VALID_IMAGE_EXTENSIONS
+            ]
             if not files:
                 return False
 
@@ -148,9 +200,10 @@ class DataManager:
         if not tag_dir.exists():
             return None
 
-        valid_extensions = {".png", ".jpg", ".jpeg", ".gif", ".webp"}
         try:
-            files = [p for p in tag_dir.iterdir() if p.is_file() and p.suffix.lower() in valid_extensions]
+            files = [
+                p for p in tag_dir.iterdir() if p.is_file() and p.suffix.lower() in self.VALID_IMAGE_EXTENSIONS
+            ]
             if not files:
                 return None
 
@@ -163,13 +216,16 @@ class DataManager:
     def get_total_memes_count(self) -> int:
         """获取所有分类下的表情包总数"""
         count = 0
-        valid_extensions = {".png", ".jpg", ".jpeg", ".gif", ".webp"}
         if not self.base_dir.exists():
             return 0
         try:
             for tag_dir in self.base_dir.iterdir():
                 if tag_dir.is_dir():
-                    count += sum(1 for p in tag_dir.iterdir() if p.is_file() and p.suffix.lower() in valid_extensions)
+                    count += sum(
+                        1
+                        for p in tag_dir.iterdir()
+                        if p.is_file() and p.suffix.lower() in self.VALID_IMAGE_EXTENSIONS
+                    )
         except Exception as e:
             logger.error(f"[本地表情包] 计算表情包总数失败: {e}")
         return count
@@ -203,10 +259,14 @@ class DataManager:
                 logger.error("[本地表情包] <表情标签>配置不是 JSON 对象，将使用默认标签。")
                 return _log_loaded_types(self._default_emoji_types(), "default_non_object_json")
             except Exception as e:
-                logger.error(f"[本地表情包] 解析<表情标签>信息失败，将使用默认标签。请检查配置格式是否正确。错误: {e}")
+                logger.error(
+                    f"[本地表情包] 解析<表情标签>信息失败，将使用默认标签。请检查配置格式是否正确。错误: {e}"
+                )
                 return _log_loaded_types(self._default_emoji_types(), "default_parse_error")
 
-        logger.error(f"[本地表情包] <表情标签>配置类型不支持({type(origin_value).__name__})，将使用默认标签。")
+        logger.error(
+            f"[本地表情包] <表情标签>配置类型不支持({type(origin_value).__name__})，将使用默认标签。"
+        )
         return _log_loaded_types(self._default_emoji_types(), "default_unsupported_type")
 
     def replace_placeholder(self, msg: str, group_id: str = "", user_id: str = "") -> str:
